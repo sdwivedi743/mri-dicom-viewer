@@ -364,63 +364,53 @@ def build_payload_series(s, enhance, params, progress=None):
 # ----------------------------------------------------------------------------------------------------------------
 VIEWER_HTML = r"""
 <style>
- *{box-sizing:border-box} 
- body{margin:0;background:#090d16;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;font-size:12px;overflow-x:hidden}
- 
- /* High-end Medical Workspace Toolbar */
- #bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:8px 16px;background:#111827;border-bottom:1px solid #1f2937;position:sticky;top:0;z-index:100}
- .brand-tag{display:flex;align-items:center;gap:6px;font-weight:700;color:#38bdf8;letter-spacing:0.5px;font-size:13px;border-right:1px solid #374151;padding-right:12px}
- .brand-tag span{color:#94a3b8;font-weight:400}
- 
- .tool-group{display:flex;align-items:center;gap:4px;background:#1f2937;padding:3px;border-radius:6px;border:1px solid #374151}
- .tool-label{font-size:11px;color:#94a3b8;padding:0 6px;text-transform:uppercase;font-weight:600;letter-spacing:0.3px}
- 
- label{display:flex;gap:6px;align-items:center;cursor:pointer;color:#cbd5e1;padding:4px 8px;border-radius:4px;transition:all 0.15s ease}
- label:hover{background:#2d3748}
- #bar b{color:#38bdf8}
- 
- #grid{display:grid;grid-template-columns:repeat(__COLS__,1fr);gap:10px;padding:10px;background:#090d16}
- .panel{border-radius:8px;padding:6px;background:#0f172a;border:1px solid #1e293b;position:relative;display:flex;flex-direction:column}
- .panel.active-viewport{border-color:#38bdf8;box-shadow:0 0 0 1px #38bdf8}
- 
- .hd{display:flex;gap:6px;align-items:center;margin-bottom:6px;background:#1e293b;padding:4px 8px;border-radius:4px}
- .ttl{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#f8fafc;font-weight:600;font-size:11px;letter-spacing:.3px}
- 
- button,select{background:#2d3748;color:#f1f5f9;border:1px solid #4a5568;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;transition:all 0.10s ease}
- button:hover,select:hover{background:#4facfe;color:#090d16;border-color:#4facfe}
- button.on{background:#0ea5e9;border-color:#0ea5e9;color:#ffffff;font-weight:600}
- 
- canvas{width:100%;height:__PANEL_H__px;display:block;background:#000;border-radius:4px;cursor:crosshair;touch-action:none}
- .st{margin-top:4px;color:#94a3b8;font:11px ui-monospace,Menlo,Consolas,monospace;min-height:16px;background:#090d16;padding:4px 8px;border-radius:4px;border:1px solid #1e293b}
- .pat-banner{background:#1e1b4b;border:1px solid #4338ca;color:#c7d2fe;padding:4px 10px;border-radius:4px;font-weight:600;font-size:11px;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px}
-
- /* Workstation refinement */
- body{background:#0b1017}
- #bar{background:#111923;gap:8px;padding:8px;border:1px solid #263241;border-radius:6px}
- .brand-tag{font-size:11px;color:#70c8df;letter-spacing:1px}
- .tool-group{background:#16212e;border-color:#263241;flex-wrap:wrap}
- .tool-label{font-size:9px;letter-spacing:1px}
- #grid{background:#0b1017;padding:10px 0;gap:8px}
- .panel{padding:0;border-radius:5px;overflow:hidden;background:#000;min-width:0}
- .panel.active-viewport{border-color:#70c8df;box-shadow:0 0 0 1px #70c8df}
- .hd{flex-wrap:wrap;border-radius:0;background:#111923;padding:8px;margin:0}
- .ttl{flex-basis:100%;font-size:12px;margin-bottom:3px}
- button,select{background:#16212e;border-color:#334254;padding:5px 8px}
- button:hover,select:hover{background:#234255;color:#edf4fb;border-color:#70c8df}
- button.on{background:#234255;border-color:#70c8df}
- button:focus-visible,select:focus-visible,label:focus-within{outline:2px solid #70c8df;outline-offset:2px}
- input{accent-color:#70c8df}
- canvas{border-radius:0}
- .st{border:0;border-top:1px solid #263241;border-radius:0;margin:0;line-height:1.5;min-height:40px}
- .pat-banner{white-space:normal;max-width:none;flex-basis:100%;margin:0;background:#16212e;border-color:#334254;color:#b7c6d8}
- @media(max-width:900px){#grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tool-label{display:none}}
- @media(max-width:600px){#grid{grid-template-columns:1fr}.brand-tag{display:none}}
+*{box-sizing:border-box}body{margin:0;background:#080c12;color:#d4deea;font:12px -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}
+button,select{font:inherit;cursor:pointer;color:#b7c8da;background:#16212e;border:1px solid #2b3b4d;border-radius:4px;padding:6px 9px}
+button:hover,select:hover{color:#eef8ff;background:#23384b;border-color:#518caf}
+button:focus-visible,select:focus-visible{outline:2px solid #63c5e7;outline-offset:2px}
+button.on{background:#173a50;border-color:#4384a6;color:#91dcf5}
+button:disabled{opacity:.4;cursor:default}input{accent-color:#63c5e7}
+#bar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:8px 10px;background:#131d29;border:1px solid #2b3b4d;border-radius:5px 5px 0 0}
+.brand-tag{font-size:10px;letter-spacing:1.2px;color:#7890a8;padding:0 10px 0 0;border-right:1px solid #314255}
+.tool-group{display:flex;gap:3px;align-items:center}.tool-label{color:#6b8198;font-size:9px;letter-spacing:1px;margin-right:5px}
+label{display:flex;align-items:center;gap:5px;font-size:11px;padding:6px 4px;cursor:pointer}
+.tool-button{display:inline-flex;align-items:center;gap:6px;background:transparent;border-color:transparent;padding:7px 9px}
+.tool-button svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.workspace{display:grid;grid-template-columns:146px minmax(0,1fr);border:1px solid #26313f;border-top:0;min-height:640px}
+#series-rail{background:#101720;border-right:1px solid #26313f;padding:12px 9px}
+.rail-heading{font-size:9px;letter-spacing:1.5px;color:#70859c;margin:0 0 14px 3px}
+.series-card{display:block;width:100%;padding:6px;text-align:left;margin-bottom:10px;background:#121c27;border-color:#29394b}
+.series-card.active{border-color:#55bcdf;background:#172d3d}
+.series-card canvas{height:76px;width:100%;background:#000;border-radius:2px;cursor:pointer}
+.series-card .name{display:block;font-size:11px;margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.series-card .meta{font-size:9px;color:#70859c;display:block;margin-top:4px}
+#grid{display:grid;grid-template-columns:repeat(__COLS__,minmax(0,1fr));gap:2px;padding:2px;background:#080c12;align-content:stretch}
+.panel{position:relative;min-width:0;background:#000;border:1px solid #26313f;display:flex;flex-direction:column;overflow:hidden}
+.panel.active-viewport{border-color:#55bcdf}
+.hd{display:flex;flex-wrap:wrap;gap:5px;align-items:center;background:#101821;padding:7px 9px;border-bottom:1px solid #26313f}
+.ttl{flex:1 1 100%;font-size:11px;color:#cbdcea;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:3px}
+.hd button,.hd select{font-size:10px;padding:4px 6px;background:#15212d}
+.panel canvas{width:100%;height:__PANEL_H__px;min-height:260px;flex:1;display:block;background:#000;cursor:crosshair;touch-action:none}
+.st{padding:8px 9px;background:#0c131c;color:#7992a9;font:10px ui-monospace,Consolas,monospace;line-height:1.6;min-height:42px;border-top:1px solid #26313f}
+.pat-banner{width:100%;padding:7px 10px;background:#172634;color:#c0d5e7;border-top:1px solid #314255;font-size:11px}
+.workspace-footer{display:flex;justify-content:space-between;gap:12px;color:#688097;font-size:10px;background:#111923;padding:10px 12px;border:1px solid #26313f;border-top:0}
+.empty-canvas{position:relative;min-height:320px;background:radial-gradient(ellipse at 50% 52%,#101923 0%,#05090e 60%);display:grid;place-items:center}
+.empty-canvas .corner{position:absolute;top:14px;left:14px;color:#405268;font:10px ui-monospace,monospace}
+.empty-canvas .center{text-align:center;color:#50667d;font-size:11px;line-height:1.8}
+.empty-canvas .center svg{width:39px;height:39px;display:block;margin:0 auto 10px;stroke:#354c61;fill:none;stroke-width:1}
+.empty-canvas .center b{color:#9eb4c9;font-size:14px;font-weight:400;display:block}
+.empty-canvas .bottom{position:absolute;bottom:14px;left:14px;font:9px ui-monospace,monospace;color:#35485c}
+.rail-empty{height:85px;border:1px dashed #2c4054;display:grid;place-items:center;color:#4f667d;font-size:25px;margin-bottom:10px}
+.rail-hint{color:#70859c;font-size:10px;line-height:1.7;padding:5px}
+@media(max-width:1000px){.workspace{grid-template-columns:110px minmax(0,1fr)}#grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tool-label,.brand-tag{display:none}}
+@media(max-width:600px){.workspace{grid-template-columns:1fr}#series-rail{display:none}#grid{grid-template-columns:1fr}.tool-button{padding:6px}.tool-button span{display:none}.workspace-footer{flex-wrap:wrap}}
 </style>
 
 <div id="bar">
-  <div class="brand-tag">SD-DCM <span>WORKSTATION</span></div>
+  <div class="brand-tag">IMAGE TOOLS</div>
 </div>
-<div id="grid"></div>
+<div class="workspace"><nav id="series-rail" aria-label="Loaded series"><div class="rail-heading">LOADED SERIES</div></nav><div id="grid"></div></div>
+<div class="workspace-footer"><span>Scroll to browse &nbsp; · &nbsp; Ctrl / Cmd + scroll to zoom &nbsp; · &nbsp; Middle drag to pan</span><span>Space: cine &nbsp; · &nbsp; R: reset</span></div>
 
 <script>
 const P=__PAYLOAD__;
@@ -517,14 +507,28 @@ syncG.append(chk('Scroll Linked','sync',true));
 syncG.append(chk('W/L Linked','link',false));
 bar.append(syncG);
 
+const icons={
+ wl:'<circle cx="12" cy="12" r="8"/><path d="M12 4v16M12 4a8 8 0 0 1 0 16Z"/>',
+ pan:'<path d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
+ zoom:'<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6M7 10h6M10 7v6"/>',
+ dist:'<path d="m4 18 14-14 3 3L7 21ZM9 13l2 2M13 9l2 2"/>',
+ roi:'<rect x="4" y="4" width="16" height="16" rx="1" stroke-dasharray="3 3"/><path d="M8 12h8M12 8v8"/>'};
+function toolButton(x){
+ const button=$('button',{className:'tool-button',title:x.l,ariaLabel:x.l});
+ button.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true">'+icons[x.t]+'</svg><span>'+x.l+'</span>';
+ return button;
+}
 const toolG=$('div',{className:'tool-group'});
-toolG.append($('div',{className:'tool-label',textContent:'TOOLS'}));
-[{t:'wl',l:'Window/Level'},{t:'pan',l:'Pan'},{t:'dist',l:'Distance'},{t:'roi',l:'ROI'}].forEach((x,k)=>{
-  const r=$('input',{type:'radio',name:'tool',checked:k===0,ariaLabel:x.l});
-  r.onchange=()=>{opt.tool=x.t;};
-  toolG.append($('label',null,[r,document.createTextNode(x.l)]));
+[{t:'wl',l:'Window / level'},{t:'pan',l:'Pan'},{t:'zoom',l:'Zoom'},{t:'dist',l:'Distance'},{t:'roi',l:'ROI'}].forEach((x,k)=>{
+ const button=toolButton(x);button.classList.toggle('on',k===0);button.setAttribute('aria-pressed',String(k===0));
+ button.onclick=()=>{opt.tool=x.t;toolG.querySelectorAll('button').forEach(b=>{b.classList.remove('on');b.setAttribute('aria-pressed','false');});button.classList.add('on');button.setAttribute('aria-pressed','true');};
+ toolG.append(button);
 });
-bar.append(toolG);
+bar.prepend(toolG);
+const layout=$('select',{ariaLabel:'Viewport layout',title:'Viewport layout'});
+[['auto','Layout: Auto'],['1','Layout: 1 column'],['2','Layout: 2 columns'],['3','Layout: 3 columns']].forEach(([value,textContent])=>layout.append($('option',{value,textContent})));
+layout.onchange=()=>{grid.style.gridTemplateColumns='repeat('+(layout.value==='auto'?__COLS__:layout.value)+',minmax(0,1fr))';requestAnimationFrame(drawAll);};
+bar.append(layout);
 
 const clr=$('button',{textContent:'Clear measurements'});clr.onclick=()=>{S.forEach(st=>st.meas={});drawAll();};bar.append(clr);
 
@@ -537,6 +541,9 @@ function chk(label,key,init){
 }
 
 const grid=document.getElementById('grid');
+const rail=document.getElementById('series-rail');
+function activate(i){hover=i;document.querySelectorAll('.panel').forEach((p,j)=>p.classList.toggle('active-viewport',j===i));rail.querySelectorAll('.series-card').forEach((p,j)=>p.classList.toggle('active',j===i));}
+async function thumbnail(i,cv){const s=P.series[i],data=await getFrame(i,Math.floor(s.pos.length/2),false);cv.width=s.cols;cv.height=s.rows;const ctx=cv.getContext('2d'),im=ctx.createImageData(s.cols,s.rows),[lo,hi]=s.wl.auto;for(let k=0;k<data.length;k++){let v=Math.max(0,Math.min(255,255*(val(s,data[k])-lo)/Math.max(1e-9,hi-lo)));if(s.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);}
 P.series.forEach((s,i)=>{
   const st=S[i],cv=$('canvas'),stat=$('div',{className:'st'}),pnl=$('div',{className:'panel'});
   if(i===0) pnl.classList.add('active-viewport');
@@ -561,10 +568,12 @@ P.series.forEach((s,i)=>{
   st.togEnh=()=>bEnh.onclick();st.togInv=()=>bInv.onclick();st.togPlay=()=>bPlay.onclick();
   pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bRst,bPlay]),cv,stat);
   grid.append(pnl);
+  const thumb=$('canvas'),card=$('button',{className:'series-card'+(i===0?' active':''),title:s.title,ariaLabel:'Focus '+s.title});
+  card.append(thumb,$('span',{className:'name',textContent:s.title}),$('span',{className:'meta',textContent:s.plane+' · '+s.pos.length+' images'}));
+  card.onclick=()=>{activate(i);pnl.scrollIntoView({behavior:'smooth',block:'nearest'});};rail.append(card);thumbnail(i,thumb);
   
   cv.addEventListener('mouseenter',()=>{
-    hover=i;
-    document.querySelectorAll('.panel').forEach((p,idx)=>p.classList.toggle('active-viewport',idx===i));
+    activate(i);
   });
   cv.addEventListener('wheel',e=>{
     e.preventDefault();
@@ -591,7 +600,8 @@ P.series.forEach((s,i)=>{
       const targets=opt.link?[...Array(N).keys()]:[i];
       targets.forEach(j=>{const sj=P.series[j],stj=S[j],r0=Math.max(1e-9,sj.wl.auto[1]-sj.wl.auto[0])/300;
         let c=(stj.hi+stj.lo)/2,w=stj.hi-stj.lo;w=Math.max(r0*2,w+dx*r0);c-=dy*r0;stj.lo=c-w/2;stj.hi=c+w/2;draw(j);});
-    }else if(drag.tool==='pan'){st.px+=dx;st.py+=dy;draw(i);}
+    }else if(drag.tool==='zoom'){st.zoom=Math.max(.2,Math.min(20,st.zoom*Math.exp(-dy*.015)));draw(i);}
+    else if(drag.tool==='pan'){st.px+=dx;st.py+=dy;draw(i);}
     else if(drag.m){const rc=cv.getBoundingClientRect(),[x,y]=toImage(st,e.clientX-rc.left,e.clientY-rc.top);drag.m.x2=x;drag.m.y2=y;draw(i);}
   });
   const end=()=>{if(drag&&drag.m&&drag.m.type==='roi')roiStats(i,drag.m);drag=null;};
@@ -611,50 +621,74 @@ drawAll();
 </script>
 """
 
-def build_viewer_html(series_payloads, patient_text=None, panel_height=430):
+
+def build_empty_workspace():
+    theme = VIEWER_HTML.split("</style>")[0] + "</style>"
+    theme = theme.replace("__COLS__", "2").replace("__PANEL_H__", "300")
+    icon = '<svg viewBox="0 0 48 48"><rect x="5" y="5" width="38" height="38" rx="3"/><path d="M16 24h16M24 16v16"/></svg>'
+    tools = '<div id="bar"><div class="brand-tag">IMAGE TOOLS</div>'
+    for label in ["◐ Window / level", "✥ Pan", "⊕ Zoom", "╱ Distance", "□ ROI"]:
+        tools += f'<button disabled>{label}</button>'
+    tools += '<span style="margin-left:auto;color:#6b8198;font-size:10px">2 × 2 workspace · Awaiting study</span></div>'
+    rail = '<nav id="series-rail"><div class="rail-heading">LOADED SERIES</div><div class="rail-empty">+</div><div class="rail-hint">No series available.<br>Import a study using the panel on the left.</div></nav>'
+    cells = ''
+    for i in range(4):
+        title = "Ready for your next study" if i == 0 else "Viewport available"
+        hint = "Open a DICOM ZIP from the study browser" if i == 0 else "Selected series will appear here"
+        cells += f'<div class="panel"><div class="empty-canvas"><div class="corner">VIEWPORT {i+1:02d} / NO SERIES</div><div class="center">{icon}<b>{title}</b>{hint}</div><div class="bottom">W — &nbsp; L — &nbsp; / &nbsp; IMAGE —</div></div></div>'
+    return theme + tools + '<div class="workspace">' + rail + '<div id="grid">' + cells + '</div></div><div class="workspace-footer"><span>No image data loaded</span><span>Window / level · Measurements · Linked scrolling · Cine</span></div>'
+
+
+def build_viewer_html(series_payloads, patient_text=None, panel_height=360):
     n = len(series_payloads)
-    cols = 3 if n >= 3 else max(1, n)
+    cols = 2 if n >= 2 else 1
     payload = dict(series=series_payloads, patient=patient_text)
     data = json.dumps(payload, separators=(",", ":")).replace("</", r"<\/")
     html = (VIEWER_HTML.replace("__PAYLOAD__", data).replace("__COLS__", str(cols)).replace("__PANEL_H__", str(panel_height)))
     rows = -(-n // cols)
-    return html, rows * (panel_height + 110) + 160
+    return html, max(760, rows * (panel_height + 120) + 180)
 
 # ----------------------------------------------------------------------------------------------------------------
 #  Unified Application Presentation Layer (Streamlit Frontend Hub)
 # ----------------------------------------------------------------------------------------------------------------
 CSS = """
 <style>
-html, body, [data-testid="stAppViewContainer"] {
-    background:#0b1017; color:#e4eaf2; font-family:Arial,sans-serif;
-}
-[data-testid="stHeader"] { background:#0b1017; }
-[data-testid="stSidebar"] { background:#111923; border-right:1px solid #263241; }
-[data-testid="stSidebar"] * { color:#dbe5ef; }
-[data-testid="stMainBlockContainer"] { padding-top:1.3rem; padding-bottom:1rem; }
-[data-testid="stSidebarUserContent"] { padding-top:1.4rem; }
-[data-testid="stWidgetLabel"] p { font-size:13px; color:#b7c6d8; }
-[data-baseweb="select"] > div, [data-testid="stFileUploaderDropzone"] {
-    background:#16212e; color:#e4eaf2; border-color:#334254;
-}
-[data-testid="stExpander"] { background:#111923; border-color:#263241; }
-.main-header { display:flex; justify-content:space-between; align-items:center;
-    gap:12px; padding:16px 0 20px; margin-bottom:16px; border-bottom:1px solid #263241; }
-.main-header h1 { margin:0; font-size:23px; font-weight:600; color:#edf4fb; letter-spacing:-.5px; }
-.eyebrow { color:#70c8df; font-size:10px; letter-spacing:2px; font-weight:600; margin-bottom:5px; }
-.subtitle { color:#8ea2b8; font-size:12px; margin-top:5px; }
-.status-badge { color:#b6c7d9; border:1px solid #334254; border-radius:5px;
-    padding:7px 10px; font-size:11px; white-space:nowrap; background:#111923; }
-.stat-card { border:1px solid #263241; border-radius:6px; padding:12px 16px; background:#111923; }
-.stat-val { font-size:20px; font-weight:600; color:#e4eaf2; }
-.stat-lbl { font-size:11px; color:#8ea2b8; margin-top:3px; }
-.empty-state { border:1px solid #263241; border-radius:8px; background:#111923;
-    padding:48px 32px; margin:14px 0 20px; }
-.empty-state h2 { font-size:27px; font-weight:500; color:#edf4fb; margin:12px 0; }
-.empty-state p { color:#8ea2b8; max-width:560px; font-size:14px; line-height:1.7; }
-.workflow { display:flex; flex-wrap:wrap; gap:10px; margin-top:26px; }
-.workflow span { border:1px solid #334254; padding:9px 12px; border-radius:5px; color:#b7c6d8; font-size:12px; }
-@media(max-width:640px) { .main-header { align-items:flex-start; flex-direction:column; } .empty-state {padding:24px;} }
+html,body,[data-testid="stAppViewContainer"]{background:#080c12!important;color:#d4deea!important;font-family:Arial,sans-serif}
+[data-testid="stHeader"]{background:#080c12!important}
+[data-testid="stMainBlockContainer"]{max-width:none;padding:3rem 1.1rem .3rem!important}
+[data-testid="stVerticalBlock"]{gap:.65rem}
+[data-testid="stSidebar"]{background:#101720!important;border-right:1px solid #26313f;min-width:260px;max-width:290px}
+[data-testid="stSidebarUserContent"]{padding:1.1rem 1rem!important}
+[data-testid="stSidebar"] h3{color:#d4deea!important;font-size:15px;letter-spacing:-.2px;padding-top:0}
+[data-testid="stSidebar"] p{color:#98aabd;font-size:12px}
+[data-testid="stWidgetLabel"] p{color:#c1cedb!important;font-size:12px}
+[data-testid="stFileUploaderDropzone"]{background:#151f2b;border:1px dashed #43546a;border-radius:6px}
+[data-testid="stFileUploaderDropzone"] button{background:#20364a;color:#bce9ff;border-color:#3a6b88}
+[data-baseweb="select"]>div{background:#17212d!important;color:#d4deea!important;border-color:#344357!important}
+[data-testid="stExpander"]{background:#121b26;border-color:#2c3a4a}
+[data-testid="stSidebar"] hr{margin:14px 0;border-color:#26313f}
+[data-testid="stCheckbox"] label,[data-testid="stToggle"] label{color:#c1cedb}
+[data-testid="stFileUploaderDropzone"] small{color:#7790a8!important}
+[data-testid="stFileUploaderFile"]{background:#16212e!important;color:#bfd0e1!important;border-radius:4px}
+[data-testid="stMultiSelect"] [data-rac][role="group"], [data-testid="stSelectbox"] [data-rac][role="group"]{background:#17212d!important;border-color:#344357!important;color:#d4deea!important}
+[data-testid="stMultiSelect"] [data-tag]{background:#1b445b!important;color:#b6e8fb!important}
+[data-testid="stMultiSelect"] input,[data-testid="stSelectbox"] input{color:#d4deea!important}
+[data-testid="stMultiSelect"] button,[data-testid="stSelectbox"] button{color:#9cb4c9!important}
+[data-baseweb="tag"]{background:#1b445b!important;color:#b6e8fb!important}
+[data-baseweb="select"] input,[data-baseweb="select"] span{color:#d4deea!important}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] strong{color:#c7d7e6}
+
+.main-header{height:53px;display:flex;align-items:center;gap:16px;border-bottom:1px solid #26313f;margin-bottom:2px}
+.wordmark{font-size:21px;font-weight:700;letter-spacing:-1px;color:#f1f7ff;display:flex;align-items:center;gap:9px}
+.logo-mark{width:27px;height:27px;border:1px solid #55bcdf;border-radius:7px;display:grid;place-items:center;color:#55bcdf;font-size:23px}
+.brand-sub{font-size:10px;letter-spacing:1.4px;color:#6c8199;line-height:1.5}
+.header-tab{align-self:stretch;display:flex;align-items:center;border-bottom:2px solid #55bcdf;color:#d4deea;font-size:12px;padding:0 14px;margin-left:26px}
+.header-meta{margin-left:auto;font-size:11px;color:#8499b0;display:flex;gap:15px;align-items:center}
+.status-dot{width:6px;height:6px;border-radius:100%;background:#55bcdf;display:inline-block;margin-right:6px}
+.study-strip{display:flex;gap:18px;align-items:center;padding:10px 14px;background:#111923;border:1px solid #26313f;border-radius:4px;font-size:12px;color:#a4b7ca;flex-wrap:wrap}
+.study-strip b{color:#d9e6f2;font-weight:500}
+.study-strip .right{margin-left:auto;color:#6f849a;font-size:11px}
+@media(max-width:700px){.header-tab,.brand-sub{display:none}.header-meta{font-size:10px}.main-header{gap:8px}}
 </style>
 """
 
@@ -672,19 +706,19 @@ def main():
     st.markdown(CSS, unsafe_allow_html=True)
     
     st.markdown(
-        '<div class="main-header"><div><div class="eyebrow">SD-DCM / IMAGING WORKSPACE</div>'
-        '<h1>Clinical workstation</h1><div class="subtitle">Study review · Multi-series comparison · Image tools</div></div>'
-        '<span class="status-badge">ZIP import · Research &amp; review</span></div>',
+        '<div class="main-header"><div class="wordmark"><span class="logo-mark">+</span> SD-DCM</div>'
+        '<div class="brand-sub">CLINICAL<br>WORKSTATION</div><div class="header-tab">Study workspace</div>'
+        '<div class="header-meta"><span><i class="status-dot"></i>Image review</span><span>Research use</span></div></div>',
         unsafe_allow_html=True,
     )
     sb = st.sidebar
     sb.markdown("### Study browser")
-    sb.caption("01 / IMPORT")
+    sb.caption("DICOM ARCHIVE")
     up = sb.file_uploader("Open DICOM study", type=["zip"],
                           help="Upload a ZIP archive containing DICOM images.")
     sb.caption("Files are processed by the Streamlit server hosting this app.")
     sb.divider()
-    sb.caption("02 / IMAGE PROCESSING")
+    sb.caption("PROCESSING")
     enhance = sb.toggle("Enable enhancement", value=True,
                         help="Creates a processed version. Use Enhance in each viewport to compare with the original.")
     with sb.expander("Enhancement settings", expanded=False):
@@ -711,15 +745,9 @@ def main():
                     "**I** · Invert · **E** · Enhancement")
 
     if up is None:
-        st.markdown(
-            '<div class="empty-state"><div class="eyebrow">READY TO REVIEW</div>'
-            '<h2>Your images. A focused workspace.</h2>'
-            '<p>Open a DICOM ZIP archive from the study browser to begin. '
-            'Select series, compare images side by side, and keep image controls within reach.</p>'
-            '<div class="workflow"><span>01 &nbsp; Open study</span><span>02 &nbsp; Select series</span>'
-            '<span>03 &nbsp; Review images</span></div></div>', unsafe_allow_html=True,
-        )
-        st.caption("Available tools: window/level, zoom, pan, distance, ROI statistics, linked scrolling and cine.")
+        st.markdown('<div class="study-strip"><b>No study loaded</b><span>Open a DICOM ZIP in the study browser</span>'
+                    '<span class="right">Identifiers hidden by default</span></div>', unsafe_allow_html=True)
+        st.components.v1.html(build_empty_workspace(), height=760, scrolling=True)
         return
 
     zbytes = up.getvalue()
@@ -732,14 +760,11 @@ def main():
         st.error("No readable DICOM images found. Check the ZIP contents and pixel-data support.")
         return
         
-    # Ingest Metrics Panel
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: st.markdown(f'<div class="stat-card"><div class="stat-val">{len(series)}</div><div class="stat-lbl">Series</div></div>', unsafe_allow_html=True)
-    with c2: st.markdown(f'<div class="stat-card"><div class="stat-val">{sum(len(s["items"]) for s in series)}</div><div class="stat-lbl">DICOM instances</div></div>', unsafe_allow_html=True)
-    with c3: st.markdown(f'<div class="stat-card"><div class="stat-val">{series[0]["rows"]}x{series[0]["cols"]}</div><div class="stat-lbl">First series matrix</div></div>', unsafe_allow_html=True)
-    with c4: st.markdown(f'<div class="stat-card"><div class="stat-val">ZIP archive</div><div class="stat-lbl">Source</div></div>', unsafe_allow_html=True)
-    
-    
+    total_frames = sum(sum(max(1, int(getattr(d, "NumberOfFrames", 1) or 1)) for d in item["items"]) for item in series)
+    st.markdown(
+        f'<div class="study-strip"><b>Study loaded</b><span>{len(series)} series</span><span>{total_frames} images</span>'
+        '<span class="right">ZIP archive · Select series in the study browser</span></div>', unsafe_allow_html=True)
+
     # Study Browser Ingestion Logs
     if skipped or dup:
         with st.expander("Import details", expanded=False):
@@ -751,13 +776,12 @@ def main():
     # High-Density Series Selection Hub
     labels = {s["label"] + f"  [{s['uid'][-6:]}]": s for s in series}
     
-    sb.caption("03 / SERIES")
+    sb.caption("SERIES SELECTION")
     chosen = sb.multiselect(
         "Visible series", list(labels), default=list(labels)[:min(3, len(labels))],
         max_selections=MAX_PANELS, key=f"series_{fhash}",
         help="Select up to six series. Each selected series opens in a separate viewport.",
     )
-    st.markdown("#### Image workspace")
     if not chosen:
         st.info("Select a series in the study browser to open a viewport.")
         return
