@@ -365,28 +365,28 @@ def build_payload_series(s, enhance, params, progress=None):
 VIEWER_HTML = r"""
 <style>
  *{box-sizing:border-box} 
- body{margin:0;background:#090d16;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;font-size:12px;overflow-x:hidden}
+ body{margin:0;background:#080d14;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;font-size:12px;overflow-x:hidden}
  
  /* High-end Medical Workspace Toolbar */
- #bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:8px 16px;background:#111827;border-bottom:1px solid #1f2937;position:sticky;top:0;z-index:100}
+ #bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:8px 16px;background:#111b26;border-bottom:1px solid #293b4b;position:sticky;top:0;z-index:100}
  .brand-tag{display:flex;align-items:center;gap:6px;font-weight:700;color:#38bdf8;letter-spacing:0.5px;font-size:13px;border-right:1px solid #374151;padding-right:12px}
  .brand-tag span{color:#94a3b8;font-weight:400}
  
- .tool-group{display:flex;align-items:center;gap:4px;background:#1f2937;padding:3px;border-radius:6px;border:1px solid #374151}
+ .tool-group{display:flex;align-items:center;gap:4px;background:#162431;padding:3px;border-radius:6px;border:1px solid #374151}
  .tool-label{font-size:11px;color:#94a3b8;padding:0 6px;text-transform:uppercase;font-weight:600;letter-spacing:0.3px}
  
  label{display:flex;gap:6px;align-items:center;cursor:pointer;color:#cbd5e1;padding:4px 8px;border-radius:4px;transition:all 0.15s ease}
  label:hover{background:#2d3748}
  #bar b{color:#38bdf8}
  
- #grid{display:grid;grid-template-columns:repeat(__COLS__,1fr);gap:10px;padding:10px;background:#090d16}
- .panel{border-radius:8px;padding:6px;background:#0f172a;border:1px solid #1e293b;position:relative;display:flex;flex-direction:column}
+ #grid{display:grid;grid-template-columns:repeat(__COLS__,1fr);gap:10px;padding:10px;background:#080d14}
+ .panel{border-radius:7px;padding:5px;background:#0b131d;border:1px solid #2a3a49;position:relative;display:flex;flex-direction:column}
  .panel.active-viewport{border-color:#38bdf8;box-shadow:0 0 0 1px #38bdf8}
  
- .hd{display:flex;gap:6px;align-items:center;margin-bottom:6px;background:#1e293b;padding:4px 8px;border-radius:4px}
+ .hd{display:flex;gap:6px;align-items:center;margin-bottom:6px;background:#14202b;padding:6px 8px;border-radius:4px}
  .ttl{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#f8fafc;font-weight:600;font-size:11px;letter-spacing:.3px}
  
- button,select{background:#2d3748;color:#f1f5f9;border:1px solid #4a5568;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;transition:all 0.10s ease}
+ button,select{background:#1b2a38;color:#e0eaf2;border:1px solid #344758;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;transition:all 0.10s ease}
  button:hover,select:hover{background:#4facfe;color:#090d16;border-color:#4facfe}
  button.on{background:#0ea5e9;border-color:#0ea5e9;color:#ffffff;font-weight:600}
  
@@ -396,7 +396,7 @@ VIEWER_HTML = r"""
 </style>
 
 <div id="bar">
-  <div class="brand-tag">SD-DCM <span>WORKSTATION</span></div>
+  <div class="brand-tag">SD-DCM <span>IMAGE VIEWER</span></div>
 </div>
 <div id="grid"></div>
 
@@ -450,8 +450,7 @@ async function draw(i){
     const [x1,y1]=toScreen(st,m.x1,m.y1),[x2,y2]=toScreen(st,m.x2,m.y2);
     ctx.strokeStyle=ctx.fillStyle=m.type==='roi'?'#fbbf24':'#34d399';
     if(m.type==='roi'){ctx.strokeRect(Math.min(x1,x2),Math.min(y1,y2),Math.abs(x2-x1),Math.abs(y2-y1));
-      if(m.txt)m.txt.split('
-').forEach((t,k)=>ctx.fillText(t,Math.max(x1,x2)+6*dpr,Math.min(y1,y2)+(14+k*14)*dpr));}
+      if(m.txt)m.txt.split('\n').forEach((t,k)=>ctx.fillText(t,Math.max(x1,x2)+6*dpr,Math.min(y1,y2)+(14+k*14)*dpr));}
     else{ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.fillRect(x1-3*dpr,y1-3*dpr,6*dpr,6*dpr);ctx.fillRect(x2-3*dpr,y2-3*dpr,6*dpr,6*dpr);
       ctx.fillText(mm(s,m).toFixed(2)+' mm',x2+8*dpr,y2+12*dpr);}
   }
@@ -485,30 +484,27 @@ async function roiStats(i,m){
   let n=0,sum=0,sq=0,mn=Infinity,mx=-Infinity;
   for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const v=val(s,data[y*s.cols+x]);n++;sum+=v;sq+=v*v;if(v<mn)mn=v;if(v>mx)mx=v;}
   if(!n)return;const mean=sum/n,sd=Math.sqrt(Math.max(0,sq/n-mean*mean)),area=n*s.spacing[0]*s.spacing[1];
-  m.txt='Mean: '+mean.toFixed(1)+'
-SD: '+sd.toFixed(1)+'
-Min/Max: '+mn.toFixed(0)+'/'+mx.toFixed(0)+'
-Area: '+area.toFixed(1)+'mm²';
+  m.txt='Mean: '+mean.toFixed(1)+'\nSD: '+sd.toFixed(1)+'\nMin/Max: '+mn.toFixed(0)+'/'+mx.toFixed(0)+'\nArea: '+area.toFixed(1)+'mm²';
   draw(i);
 }
 
 const bar=document.getElementById('bar');
 const syncG=$('div',{className:'tool-group'});
-syncG.append($('div',{className:'tool-label',textContent:'Sync Controls'}));
+syncG.append($('div',{className:'tool-label',textContent:'Navigation'}));
 syncG.append(chk('Scroll Linked','sync',true));
 syncG.append(chk('W/L Linked','link',false));
 bar.append(syncG);
 
 const toolG=$('div',{className:'tool-group'});
-toolG.append($('div',{className:'tool-label',textContent:'Active Caliper/Cursor Tool'}));
-[{t:'wl',l:'Window/Level'},{t:'dist',l:'Distance Line'},{t:'roi',l:'ROI Stats Box'}].forEach((x,k)=>{
+toolG.append($('div',{className:'tool-label',textContent:'Tools'}));
+[{t:'wl',l:'Window / Level'},{t:'dist',l:'Distance'},{t:'roi',l:'ROI'}].forEach((x,k)=>{
   const r=$('input',{type:'radio',name:'tool',checked:k===0});
   r.onchange=()=>{opt.tool=x.t;};
   toolG.append($('label',null,[r,document.createTextNode(x.l)]));
 });
 bar.append(toolG);
 
-const clr=$('button',{textContent:'Clear Overlays'});clr.onclick=()=>{S.forEach(st=>st.meas={});drawAll();};bar.append(clr);
+const clr=$('button',{textContent:'Clear measurements'});clr.onclick=()=>{S.forEach(st=>st.meas={});drawAll();};bar.append(clr);
 
 if(P.patient){bar.append($('div',{className:'pat-banner',textContent:P.patient}));}
 
@@ -593,11 +589,11 @@ drawAll();
 </script>
 """
 
-def build_viewer_html(series_payloads, patient_text=None, panel_height=430):
+def build_viewer_html(series_payloads, patient_text=None, panel_height=460):
     n = len(series_payloads)
     cols = 3 if n >= 3 else max(1, n)
     payload = dict(series=series_payloads, patient=patient_text)
-    data = json.dumps(payload, separators=(",", ":")).replace("</", "<\/")
+    data = json.dumps(payload, separators=(",", ":")).replace("</", "<\\/")
     html = (VIEWER_HTML.replace("__PAYLOAD__", data).replace("__COLS__", str(cols)).replace("__PANEL_H__", str(panel_height)))
     rows = -(-n // cols)
     return html, rows * (panel_height + 80) + 110
@@ -607,71 +603,37 @@ def build_viewer_html(series_payloads, patient_text=None, panel_height=430):
 # ----------------------------------------------------------------------------------------------------------------
 CSS = """
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    
-    html, body, [data-testid="stAppViewContainer"] {
-        background-color: #0b0f19 !important;
-        color: #f1f5f9 !important;
-        font-family: 'Inter', sans-serif !important;
-    }
-    
-    .main-header {
-        background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%);
-        padding: 16px 24px;
-        border-radius: 12px;
-        border: 1px solid #334155;
-        margin-bottom: 24px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    
-    .main-header h1 {
-        margin: 0;
-        font-size: 22px;
-        font-weight: 700;
-        background: linear-gradient(90deg, #38bdf8 0%, #818cf8 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    
-    .status-badge {
-        background: #022c22;
-        color: #34d399;
-        border: 1px solid #065f46;
-        padding: 4px 12px;
-        border-radius: 9999px;
-        font-size: 11px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    
-    .stat-card {
-        background: #1e293b;
-        border: 1px solid #334155;
-        border-radius: 8px;
-        padding: 16px;
-        text-align: center;
-    }
-    
-    .stat-val {
-        font-size: 24px;
-        font-weight: 700;
-        color: #38bdf8;
-    }
-    
-    .stat-lbl {
-        font-size: 11px;
-        color: #94a3b8;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin-top: 4px;
-    }
-    
-    div[data-testid="stSidebarUserContent"] {
-        padding-top: 2rem;
-    }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+:root {color-scheme:dark;--base:#080d14;--surface:#111a25;--border:#253343;--muted:#8c9daf;--accent:#4cb8e8}
+html,body,[data-testid="stApp"],[data-testid="stAppViewContainer"],.stApp {background:var(--base)!important;color:#e5edf5!important;font-family:Inter,system-ui,sans-serif!important}
+[data-testid="stHeader"]{background:rgba(8,13,20,.9)!important}
+[data-testid="stSidebar"]{background:#101923!important;border-right:1px solid var(--border)}
+[data-testid="stSidebarUserContent"]{padding-top:1.5rem}
+[data-testid="stMainBlockContainer"]{padding-top:1.25rem;max-width:100%!important;padding-left:2rem;padding-right:2rem}
+h1,h2,h3{letter-spacing:-.025em!important}
+[data-testid="stFileUploader"]{border:1px dashed #395065;border-radius:10px;padding:6px;background:#121f2b}
+[data-testid="stMultiSelect"] [data-baseweb="select"]>div{background:#111d29;border-color:#304153}
+[data-testid="stMetric"]{background:#111a25;border:1px solid #253343;border-radius:9px;padding:12px 16px}
+[data-testid="stMetricLabel"]{color:#93a5b8}
+[data-testid="stMetricValue"]{font-size:1.35rem}
+.workspace-header{display:flex;justify-content:space-between;align-items:center;gap:16px;border-bottom:1px solid #273747;padding:8px 0 18px;margin-bottom:22px}
+.workspace-kicker{font-size:10px;font-weight:700;color:#57bde8;letter-spacing:.16em;text-transform:uppercase;margin-bottom:5px}
+.workspace-title{font-size:24px;font-weight:700;letter-spacing:-.04em;color:#edf4fb;line-height:1.25}
+.workspace-subtitle{font-size:12px;color:#8fa2b6;margin-top:6px}
+.workspace-status{display:inline-flex;align-items:center;gap:8px;font-size:11px;color:#a5cbbb;border:1px solid #2c594c;background:#10251f;padding:8px 11px;border-radius:6px;white-space:nowrap}
+.workspace-status:before{content:'';display:block;width:6px;height:6px;border-radius:50%;background:#52c996}
+.section-eyebrow{color:#6fb9da;text-transform:uppercase;font-size:10px;letter-spacing:.14em;font-weight:700;margin:20px 0 7px}
+.section-title{font-size:17px;color:#edf3f9;font-weight:650;margin-bottom:7px}
+.empty-workspace{min-height:300px;background:radial-gradient(ellipse at 50% 10%,#182b3c 0%,#0d1620 54%,#0a111a 100%);border:1px solid #263748;border-radius:12px;display:flex;align-items:center;justify-content:center;text-align:center;padding:42px 20px;margin:14px 0 18px}
+.empty-symbol{font-size:37px;color:#5abce5;margin-bottom:16px}
+.empty-title{font-size:21px;font-weight:650;color:#edf4fa;margin-bottom:8px}
+.empty-description{font-size:13px;color:#96a8b8;line-height:1.7;max-width:470px}
+.stat-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:8px 0 17px}
+.stat-card{background:#101a25;border:1px solid #253444;border-radius:9px;padding:12px 16px}
+.stat-val{font-size:20px;color:#e7f3fa;font-weight:650;letter-spacing:-.03em}
+.stat-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:#8498ac;margin-top:6px}
+.sidebar-note{font-size:11px;line-height:1.65;color:#91a4b7;padding:10px 0}
+@media(max-width:850px){.stat-row{grid-template-columns:repeat(2,minmax(0,1fr))}.workspace-header{align-items:flex-start}.workspace-title{font-size:20px}}
 </style>
 """
 
@@ -688,22 +650,14 @@ def main():
     st.set_page_config(page_title="SD-DCM Enterprise Workstation", page_icon="🧠", layout="wide")
     st.markdown(CSS, unsafe_allow_html=True)
     
-    # Unified Application Top Header
-    st.markdown(
-        '<div class="main-header">'
-        '<div><h1>🧠 SD-DCM Clinical Diagnostic Station</h1>'
-        '<span style="color:#64748b; font-size:11px;">PROFESSIONAL RESEARCH & REVIEW WORKSPACE</span></div>'
-        '<div><span class="status-badge">● Engine Connected</span></div>'
-        '</div>', 
-        unsafe_allow_html=True
-    )
-    
+    st.markdown('''<div class="workspace-header"><div><div class="workspace-kicker">SD-DCM / Clinical Imaging</div><div class="workspace-title">Diagnostic Workstation</div><div class="workspace-subtitle">Local DICOM study review · Multiplanar series workspace</div></div><div class="workspace-status">Local session</div></div>''', unsafe_allow_html=True)
+
     sb = st.sidebar
-    sb.markdown("### 🛠️ Configuration Controls")
-    up = sb.file_uploader("Import Patient DICOM Bundle (ZIP)", type=["zip"], help="Accepts local files or directory mappings compressed into a standard zip container.")
+    sb.markdown("### Study & processing")
+    up = sb.file_uploader("Open DICOM study (.zip)", type=["zip"], help="Accepts local files or directory mappings compressed into a standard zip container.")
     
-    enhance = sb.toggle("Run Matrix Enhancement Engine", value=True, help="Triggers noise-aware Rician denoising and spatial structural sharpening algorithms.")
-    preset = sb.selectbox("Engine Preset Style", list(PRESETS) + ["Custom Parameters"], index=1)
+    enhance = sb.toggle("Enable image enhancement", value=True, help="Triggers noise-aware Rician denoising and spatial structural sharpening algorithms.")
+    preset = sb.selectbox("Enhancement preset", list(PRESETS) + ["Custom Parameters"], index=1)
     
     if preset == "Custom Parameters":
         base = PRESETS["Balanced"]
@@ -717,21 +671,13 @@ def main():
     else:
         params = dict(PRESETS[preset])
         
-    show_ids = sb.checkbox("Unmask Patient Identifiers", value=False)
+    show_ids = sb.checkbox("Show patient identifiers in viewer", value=False)
     
     if up is None:
-        # Command Center Landing State
-        st.markdown("### 🏥 System Workload Control Center")
-        st.info("System idle. Awaiting structured clinical data ingestion. Drop or browse a compressed patient dataset in the utility sidebar control panel to begin matrix parsing.")
-        
-        # Display Static Analytics Mock for Dashboard Completeness
-        c1, c2, c3, c4 = st.columns(4)
-        with c1: st.markdown('<div class="stat-card"><div class="stat-val">0</div><div class="stat-lbl">Active Matrix Cohorts</div></div>', unsafe_allow_html=True)
-        with c2: st.markdown('<div class="stat-card"><div class="stat-val">0.0 ms</div><div class="stat-lbl">Mean Render Velocity</div></div>', unsafe_allow_html=True)
-        with c3: st.markdown('<div class="stat-card"><div class="stat-val">16-bit</div><div class="stat-lbl">Depth Architecture</div></div>', unsafe_allow_html=True)
-        with c4: st.markdown('<div class="stat-card"><div class="stat-val">PACS</div><div class="stat-lbl">Offline Standby</div></div>', unsafe_allow_html=True)
+        st.markdown('''<div class="section-eyebrow">Workspace</div><div class="section-title">No study loaded</div><div class="empty-workspace"><div><div class="empty-symbol">◎</div><div class="empty-title">Your imaging workspace is ready</div><div class="empty-description">Import a ZIP archive containing DICOM images from the left sidebar. Once loaded, select up to six series to review in synchronized diagnostic viewports.</div></div></div>''', unsafe_allow_html=True)
+        st.caption("Local processing · Original pixel data retained · For research and review; not validated for primary diagnosis")
         return
-        
+
     zbytes = up.getvalue()
     fhash = hashlib.sha1(zbytes).hexdigest()
     
@@ -742,18 +688,11 @@ def main():
         st.error("Data Ingestion Failure: No valid image slices or readable pixel matrices detected within target archive.")
         return
         
-    # Ingest Metrics Panel
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: st.markdown(f'<div class="stat-card"><div class="stat-val">{len(series)}</div><div class="stat-lbl">Parsed Sequences</div></div>', unsafe_allow_html=True)
-    with c2: st.markdown(f'<div class="stat-card"><div class="stat-val">{sum(len(s["items"]) for s in series)}</div><div class="stat-lbl">Ingested Frame Arrays</div></div>', unsafe_allow_html=True)
-    with c3: st.markdown(f'<div class="stat-card"><div class="stat-val">{series[0]["rows"]}x{series[0]["cols"]}</div><div class="stat-lbl">Target Acquisition Matrix</div></div>', unsafe_allow_html=True)
-    with c4: st.markdown(f'<div class="stat-card"><div class="stat-val">Local</div><div class="stat-lbl">File Source Space</div></div>', unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
+    st.markdown(f'''<div class="stat-row"><div class="stat-card"><div class="stat-val">{len(series)}</div><div class="stat-lbl">Series</div></div><div class="stat-card"><div class="stat-val">{sum(len(x["items"]) for x in series)}</div><div class="stat-lbl">Instances</div></div><div class="stat-card"><div class="stat-val">{series[0]["rows"]} × {series[0]["cols"]}</div><div class="stat-lbl">First series matrix</div></div><div class="stat-card"><div class="stat-val">Local</div><div class="stat-lbl">Data source</div></div></div>''', unsafe_allow_html=True)
+
     # Study Browser Ingestion Logs
     if skipped or dup:
-        with st.expander("🔬 Ingestion Framework Report Logs", expanded=False):
+        with st.expander("Import details", expanded=False):
             for why, n in skipped.items():
                 st.markdown(f"⚠️ *Skipped Entry:* `{n} instances` flagged as: **{why}**")
             if dup:
@@ -762,9 +701,9 @@ def main():
     # High-Density Series Selection Hub
     labels = {s["label"] + f"  [{s['uid'][-6:]}]": s for s in series}
     
-    st.markdown("### 📋 Integrated Series Navigation Hub")
+    st.markdown('<div class="section-eyebrow">Study browser</div><div class="section-title">Select series to display</div>', unsafe_allow_html=True)
     chosen = st.multiselect(
-        "Select Active Sequences for Canvas Multi-Viewport Array Presentation:",
+        "Series",
         list(labels),
         default=list(labels)[:min(3, len(labels))],
         help="Select sequences to map onto the diagnostic viewer layout grid."
@@ -777,12 +716,12 @@ def main():
         
     # Load Progress Vector mapping
     payloads = []
-    progress_bar = st.progress(0.0, text="Initializing target viewport arrays...")
+    progress_bar = st.progress(0.0, text="Preparing viewports...")
     
     for idx, name in enumerate(chosen):
         s = labels[name]
         try:
-            progress_bar.progress((idx) / len(chosen), text=f"Processing matrix calculations for sequence: {s['desc']}...")
+            progress_bar.progress((idx) / len(chosen), text=f"Preparing {s['desc']}...")
             payloads.append(build_payload_series(s, bool(enhance), params))
         except Exception as e:
             st.error(f"Render Thread Exception on structural parsing of {s['label']}: {e}")
@@ -803,6 +742,7 @@ def main():
             f"Scanner: {getattr(a, 'Manufacturer', 'N/A')}"
         ])
         
+    st.markdown('<div class="section-eyebrow">Image review</div>', unsafe_allow_html=True)
     # Embed Diagnostic Matrix
     html, height = build_viewer_html(payloads, patient)
     st.components.v1.html(html, height=height, scrolling=True)
