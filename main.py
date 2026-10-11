@@ -838,12 +838,71 @@ html,body,[data-testid="stAppViewContainer"]{background:#080c12!important;color:
 </style>
 """
 
+
+# Curated educational cards. Sources checked 2026-10-11; no network fetch during loading.
+LOADING_FACTS = [
+    dict(category="RADIOLOGY HISTORY · 1895", title="A new way to see inside the body",
+         text="Wilhelm Röntgen discovered X-rays in 1895 and received the first Nobel Prize in Physics in 1901.",
+         source="Nobel Prize", url="https://www.nobelprize.org/prizes/physics/1901/rontgen/facts/"),
+    dict(category="RADIOLOGY HISTORY · 1979", title="Recognising the development of CT",
+         text="Allan Cormack and Godfrey Hounsfield shared the 1979 Nobel Prize in Physiology or Medicine for developing computer-assisted tomography.",
+         source="Nobel Prize", url="https://www.nobelprize.org/prizes/medicine/1979/summary/"),
+    dict(category="MRI HISTORY · 2003", title="MRI's Nobel milestone",
+         text="Paul Lauterbur and Peter Mansfield shared the 2003 Nobel Prize in Physiology or Medicine for discoveries concerning magnetic resonance imaging.",
+         source="Nobel Prize", url="https://www.nobelprize.org/prizes/medicine/2003/press-release/"),
+    dict(category="MRI PRINCIPLES", title="Signals from fat and water",
+         text="MRI uses strong magnetic fields and radiofrequency energy. Its signal comes mainly from protons in fat and water molecules.",
+         source="US FDA", url="https://www.fda.gov/radiation-emitting-products/medical-imaging/mri-magnetic-resonance-imaging"),
+    dict(category="MRI PRINCIPLES", title="Locating the signal",
+         text="Lauterbur showed that magnetic-field gradients could identify where signals originated, enabling two-dimensional MR images.",
+         source="Nobel Prize", url="https://www.nobelprize.org/prizes/medicine/2003/press-release/"),
+    dict(category="MRI PRINCIPLES", title="A different way to form an image",
+         text="MRI forms images without ionizing radiation, using static and changing magnetic fields together with radiofrequency energy.",
+         source="US FDA", url="https://www.fda.gov/radiation-emitting-products/mri-magnetic-resonance-imaging/benefits-and-risks"),
+]
+
+
+def build_loading_html():
+    facts = json.dumps(LOADING_FACTS, ensure_ascii=True).replace("</", r"<\/")
+    return r"""
+<style>
+*{box-sizing:border-box}body{margin:0;background:#080c12;color:#d4deea;font:13px -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}
+.loading{height:410px;border:1px solid #26313f;border-radius:5px;background:radial-gradient(ellipse at 24% 50%,#142633,#0d141d 55%);display:grid;grid-template-columns:35% 65%;overflow:hidden}
+.visual{display:grid;place-items:center;position:relative;border-right:1px solid #26313f}
+.scanner{width:154px;height:154px;position:relative;border:1px solid #284355;border-radius:50%;display:grid;place-items:center}
+.scanner:before,.scanner:after{content:"";position:absolute;inset:12px;border:1px solid #315970;border-radius:50%}.scanner:after{inset:35px;border-color:#294455}
+.orbit{position:absolute;inset:-8px;border:2px solid transparent;border-top-color:#65c4e1;border-radius:50%;animation:orbit 6s linear infinite}
+.scanline{position:absolute;width:112px;height:1px;background:#65c4e1;box-shadow:0 0 12px #55bcdf80;animation:scan 4s ease-in-out infinite}
+.cross{font-size:28px;color:#567c92;font-weight:200}.visual-caption{position:absolute;bottom:39px;letter-spacing:2px;font-size:9px;color:#7296ac}
+.card{display:flex;flex-direction:column;justify-content:center;padding:34px;min-width:0}
+.kicker{font-size:9px;letter-spacing:1.8px;color:#6ab4d0;margin-bottom:18px}h2{font-size:23px;line-height:1.3;font-weight:500;margin:0 0 15px;color:#e0edf7}
+p{color:#a5b8ca;line-height:1.8;font-size:14px;margin:0;max-width:590px;min-height:78px}.meta{font-size:10px;color:#70879c;margin-top:17px}.meta a{color:#77bbd4;text-decoration:none}
+.controls{display:flex;align-items:center;gap:9px;margin-top:27px}button{border:1px solid #34495c;background:#142432;color:#aac4d8;padding:6px 11px;border-radius:4px;font-size:11px;cursor:pointer}button:hover{border-color:#65c4e1}button:focus-visible,a:focus-visible{outline:2px solid #65c4e1;outline-offset:3px}.counter{font-size:10px;color:#71889d;margin-left:auto}
+.paused .orbit,.paused .scanline{animation-play-state:paused}
+@keyframes orbit{to{transform:rotate(360deg)}}@keyframes scan{0%,100%{transform:translateY(-46px);opacity:.45}50%{transform:translateY(46px);opacity:1}}
+@media(prefers-reduced-motion:reduce){.orbit,.scanline{animation:none}}
+@media(max-width:650px){.loading{grid-template-columns:1fr;height:410px}.visual{display:none}.card{padding:24px}h2{font-size:20px}p{font-size:13px}}
+</style>
+<div class="loading"><div class="visual" aria-hidden="true"><div class="scanner"><div class="orbit"></div><div class="scanline"></div><span class="cross">+</span></div><span class="visual-caption">PREPARING YOUR STUDY</span></div>
+<section class="card" aria-label="Radiology facts during study processing"><div class="kicker" id="category"></div><h2 id="title"></h2><p id="fact"></p><div class="meta">Source: <a id="source" target="_blank" rel="noopener noreferrer"></a> · Reviewed 11 Oct 2026</div><div class="controls"><button id="pause" aria-pressed="false">Pause</button><button id="next">Next fact</button><span class="counter" id="counter"></span></div></section></div>
+<script>
+const facts=__FACTS__;let index=0,paused=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const pause=document.getElementById('pause');
+function show(){const f=facts[index];document.getElementById('category').textContent=f.category;document.getElementById('title').textContent=f.title;document.getElementById('fact').textContent=f.text;const link=document.getElementById('source');link.textContent=f.source;link.href=f.url;document.getElementById('counter').textContent=(index+1)+' / '+facts.length;}
+function state(){document.body.classList.toggle('paused',paused);pause.textContent=paused?'Resume':'Pause';pause.setAttribute('aria-pressed',String(paused));}
+pause.onclick=()=>{paused=!paused;state();};document.getElementById('next').onclick=()=>{index=(index+1)%facts.length;show();};
+const timer=setInterval(()=>{if(!paused&&!document.hidden){index=(index+1)%facts.length;show();}},10000);
+window.addEventListener('pagehide',()=>clearInterval(timer));show();state();
+</script>
+""".replace("__FACTS__", facts)
+
+
 def _cache_resource(fn):
     return st.cache_resource(show_spinner=False)(fn) if st else fn
 
 @_cache_resource
-def load_index(file_hash, _zbytes):
-    named, skipped = read_zip(_zbytes)
+def load_index(file_hash, _zbytes, _progress=None):
+    named, skipped = read_zip(_zbytes, progress=_progress)
     series, dup = group_series(named)
     return series, skipped, dup
 
@@ -899,10 +958,20 @@ def main():
     zbytes = up.getvalue()
     fhash = hashlib.sha1(zbytes).hexdigest()
     
-    with st.spinner("Reading DICOM images and grouping series..."):
-        series, skipped, dup = load_index(fhash, zbytes)
-        
+    loading = st.empty()
+    with loading.container():
+        progress_bar = st.progress(0.0, text="Reading DICOM images and grouping series...")
+        st.components.v1.html(build_loading_html(), height=420, scrolling=False)
+    try:
+        series, skipped, dup = load_index(fhash, zbytes,
+            _progress=lambda fraction: progress_bar.progress(0.15 * fraction, text="Reading DICOM archive..."))
+    except Exception as exc:
+        loading.empty()
+        st.error(f"Could not read this archive: {exc}")
+        return
+
     if not series:
+        loading.empty()
         st.error("No readable DICOM images found. Check the ZIP contents and pixel-data support.")
         return
         
@@ -936,17 +1005,20 @@ def main():
 
     # Load Progress Vector mapping
     payloads = []
-    progress_bar = st.progress(0.0, text="Preparing image workspace...")
+    progress_bar.progress(0.15, text="Preparing image workspace...")
     
     for idx, name in enumerate(chosen):
         s = labels[name]
         try:
-            progress_bar.progress((idx) / len(chosen), text=f"Preparing series: {s['desc']}...")
-            payloads.append(build_payload_series(s, bool(enhance), params))
+            progress_bar.progress(0.15 + 0.85 * idx / len(chosen), text=f"Preparing series {idx + 1}/{len(chosen)}: {s['desc']}...")
+            payloads.append(build_payload_series(s, bool(enhance), params,
+                progress=lambda fraction, current=idx: progress_bar.progress(
+                    0.15 + 0.85 * (current + fraction) / len(chosen),
+                    text=f"Enhancing series {current + 1}/{len(chosen)}...")))
         except Exception as e:
             st.error(f"Could not prepare series {s['label']}: {e}")
             
-    progress_bar.empty()
+    loading.empty()
     
     if not payloads:
         return
