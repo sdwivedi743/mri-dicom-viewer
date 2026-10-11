@@ -30,6 +30,7 @@ except ImportError:
     st = None
 
 MAX_PANELS = 6
+WORKSPACE_PAYLOAD_BUDGET = 96 * 1024 * 1024
 
 PRESETS = {
     "Natural":  dict(denoise=25, detail=75, sharpen=60, grain=15, shading=0),
@@ -329,11 +330,15 @@ def stream_pack_series(s, progress=None):
     info = series_info(samples)
     del samples
     scale = (max(mx, mn+1.0)-mn)/65535.0
-    items = []; k = 0
+    items = []; k = 0; packed_bytes = 0
     for ds in s["items"]:
         for f in iter_modality_frames(ds):
             u = np.clip(np.rint((f-mn)/scale), 0, 65535).astype("<u2")
-            items.append({"o":base64.b64encode(zlib.compress(u.tobytes(),3)).decode("ascii")})
+            encoded = base64.b64encode(zlib.compress(u.tobytes(),3)).decode("ascii")
+            packed_bytes += len(encoded) + 16
+            if packed_bytes > WORKSPACE_PAYLOAD_BUDGET:
+                raise RuntimeError("Actual compressed series payload exceeds the embedded viewer capacity. This series was not partially loaded.")
+            items.append({"o":encoded})
             k += 1
             if progress and k % 10 == 0: progress(.5+.5*k/count)
     return dict(off=mn, scale=scale, items=items), info, mn, mx
@@ -423,10 +428,10 @@ def read_zip(zbytes, max_member=400 * 1024 * 1024, progress=None):
                 progress(n / max(1, len(infos)))
     return out, skipped
 
-def build_payload_series(s, enhance, params, progress=None):
-    streamed = cine_series(s) or payload_estimate(s, enhance) > 24*1024*1024
-    if payload_estimate(s, False) > 64*1024*1024:
-        raise RuntimeError("This series exceeds the current embedded viewer transport limit (64 MiB estimated). It was not partially loaded.")
+def build_payload_series(s, enhance, params, progress=None, force_stream=False):
+    streamed = force_stream or cine_series(s) or payload_estimate(s, enhance) > 24*1024*1024
+    if payload_estimate(s, False) > 2*1024*1024*1024:
+        raise RuntimeError("This series exceeds the current decoded-workload limit. It was not partially loaded.")
     frames, errors = [], []
     if streamed:
         packed, info, source_min, source_max = stream_pack_series(s, progress)
@@ -1230,11 +1235,16 @@ def main():
     )
     sb = st.sidebar
     sb.markdown("### Study browser")
-    sb.caption("DICOM ARCHIVE")
+    sb.caption("DICOM ARCHIVE · WORKFLOW UPDATE 13")
     up = sb.file_uploader("Open DICOM study", type=["zip"],
                           help="Upload a ZIP archive containing DICOM images.")
     sb.caption("Files are processed by the Streamlit server hosting this app.")
     overview_slot = sb.empty()
+    with sb.expander("How to use workflow controls", expanded=False):
+        st.markdown("**Study overview & search:** below upload after loading. Type a series name or filter a plane to narrow thumbnails.\n\n"
+                    "**Point markers:** right-click anatomy → Nearest image in other planes. Blue crosshairs appear briefly.\n\n"
+                    "**Linked zoom/pan:** enable Zoom / pan linked in the image toolbar. Zoom links compatible views; pan links parallel views.\n\n"
+                    "**Display memory:** automatic. Switch away from a series and return; its slice and display settings are restored within this browser tab.")
     sb.divider()
     sb.caption("PROCESSING")
     enhance = sb.toggle("Enable enhancement", value=True,
@@ -1315,10 +1325,14 @@ def main():
     overview_slot.markdown(build_study_overview(series), unsafe_allow_html=True)
     labels = {item["label"] + f" [{item['uid'][-6:]}]": item for item in series}
     chosen = list(labels)
-    if sum(payload_estimate(s, bool(enhance) and not cine_series(s)) for s in series) > 64*1024*1024:
-        sb.warning("Large study: load selected series to keep the viewer within memory and transport limits.")
-        chosen = sb.multiselect("Series to load", list(labels), default=list(labels)[:1], key="series_selection_"+fhash)
-        st.info("Large-study mode: only selected series are loaded. Select more or different series in the sidebar.")
+    with sb.expander("Series loading options", expanded=False):
+        manual_selection = st.checkbox("Load selected series only", value=False, key="manual_series_"+fhash)
+        if manual_selection:
+            chosen = st.multiselect("Series to load", list(labels), default=list(labels)[:1], key="series_selection_"+fhash)
+    original_estimate = sum(payload_estimate(labels[name], False) for name in chosen)
+    study_enhance = bool(enhance) and sum(payload_estimate(labels[name], True) for name in chosen) <= 48*1024*1024
+    if enhance and not study_enhance:
+        sb.caption("Efficient loading: originals are loaded for all selected series; duplicate enhanced images are skipped. CT-like display remains available.")
     if not chosen:
         overview_slot.markdown(build_study_overview(series, loaded=0, selected=0), unsafe_allow_html=True)
         loading.empty()
@@ -1329,21 +1343,23 @@ def main():
     payloads = []
     progress_bar.progress(0.15, text="Preparing image workspace...")
     
-    planned = sum(payload_estimate(labels[name], bool(enhance) and not (cine_series(labels[name]) or payload_estimate(labels[name], bool(enhance)) > 24*1024*1024)) for name in chosen)
-    if planned > 64*1024*1024:
-        overview_slot.markdown(build_study_overview(series, loaded=0, selected=len(chosen)), unsafe_allow_html=True)
-        loading.empty()
-        st.error("Selected series exceed the current viewer transport budget. Select fewer series; no partial series will be displayed.")
-        return
+    actual_payload_bytes = 0
     for idx, name in enumerate(chosen):
         s = labels[name]
         logging.getLogger("dicom_viewer").warning("DICOM series prepare: index=%s frames=%s estimated_original_bytes=%s cine=%s", idx, frame_count(s), payload_estimate(s), cine_series(s))
         try:
             progress_bar.progress(0.15 + 0.85 * idx / len(chosen), text=f"Preparing series {idx + 1}/{len(chosen)}: {s['desc']}...")
-            payloads.append(build_payload_series(s, bool(enhance), params,
+            prepared = build_payload_series(s, study_enhance, params, force_stream=original_estimate > 64*1024*1024,
                 progress=lambda fraction, current=idx: progress_bar.progress(
                     0.15 + 0.85 * (current + fraction) / len(chosen),
-                    text=f"Enhancing series {current + 1}/{len(chosen)}...")))
+                    text=f"Preparing series {current + 1}/{len(chosen)}..."))
+            actual_payload_bytes += len(json.dumps(prepared, separators=(",", ":")))
+            if actual_payload_bytes > WORKSPACE_PAYLOAD_BUDGET:
+                overview_slot.markdown(build_study_overview(series, loaded=0, selected=len(chosen)), unsafe_allow_html=True)
+                loading.empty()
+                st.error("The actual packed image data exceeds this embedded viewer's capacity. Open Series loading options and enable Load selected series only. No partial workspace is displayed.")
+                return
+            payloads.append(prepared)
         except Exception as e:
             logging.getLogger("dicom_viewer").error("Series preparation failed: index=%s frames=%s exception=%s", idx, frame_count(s), type(e).__name__)
             st.error(f"Could not prepare series {s['label']}: {e}")
