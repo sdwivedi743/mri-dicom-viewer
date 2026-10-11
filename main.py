@@ -10,6 +10,9 @@ Run:
 
 import base64
 import hashlib
+import logging
+import tempfile
+import shutil
 import io
 import json
 import sys
@@ -257,24 +260,83 @@ def decode_pixels(ds):
             "Re-uploading or repacking the ZIP will not install the decoder."
         )
     try:
-        return np.asarray(ds.pixel_array)
+        from pydicom.pixels import pixel_array
+        return np.asarray(pixel_array(ds))
     except Exception as exc:
         raise RuntimeError(f"Pixel decoding failed for {uid.name} ({uid}): {exc}") from exc
 
 
-def modality_frames(ds):
-    arr = decode_pixels(ds)
+def iter_modality_frames(ds):
+    from pydicom.pixels import iter_pixels, get_decoder
+    uid = getattr(getattr(ds, "file_meta", None), "TransferSyntaxUID", None)
+    if uid is None:
+        raise RuntimeError("Missing DICOM TransferSyntaxUID.")
+    decoder = get_decoder(uid)
+    if not decoder.is_available:
+        decode_pixels(ds)  # Reuse the actionable decoder dependency message.
     nfr = int(getattr(ds, "NumberOfFrames", 1) or 1)
-    spp = int(getattr(ds, "SamplesPerPixel", 1) or 1)
-    if spp == 3:
+    slope = _first(getattr(ds, "RescaleSlope", None), 1.0)
+    icpt = _first(getattr(ds, "RescaleIntercept", None), 0.0)
+    count = 0
+    source = ds.filename if getattr(ds, "_archive_owner", None) is not None else ds
+    for arr in iter_pixels(source):
         if arr.ndim == 3 and arr.shape[-1] == 3:
-            arr = arr[..., 0] * 0.299 + arr[..., 1] * 0.587 + arr[..., 2] * 0.114
-        elif arr.ndim == 4:
-            arr = arr[..., 0] * 0.299 + arr[..., 1] * 0.587 + arr[..., 2] * 0.114
-    frames = list(arr) if (nfr > 1 and arr.ndim == 3) else [arr]
-    slope = _first(getattr(ds, "RescaleSlope", None), 1.0) or 1.0
-    icpt = _first(getattr(ds, "RescaleIntercept", None), 0.0) or 0.0
-    return [np.asarray(f, np.float32) * slope + icpt for f in frames]
+            arr = arr[..., 0] * .299 + arr[..., 1] * .587 + arr[..., 2] * .114
+        if arr.shape != (int(ds.Rows), int(ds.Columns)):
+            raise RuntimeError(f"Unsupported pixel dimensions: {arr.shape}.")
+        frame = np.asarray(arr, np.float32) * slope + icpt
+        if not np.isfinite(frame).all():
+            raise RuntimeError("Pixel data contains non-finite values.")
+        count += 1
+        yield frame
+    if count != nfr:
+        raise RuntimeError(f"Frame count mismatch: expected {nfr}, decoded {count}.")
+
+
+def modality_frames(ds):
+    return list(iter_modality_frames(ds))
+
+
+def frame_count(s):
+    return sum(max(1, int(getattr(d, "NumberOfFrames", 1) or 1)) for d in s["items"])
+
+
+def payload_estimate(s, enhance=False):
+    # Conservative transport estimate: quantised pixels, base64, JSON and optional enhanced copy.
+    return frame_count(s) * s["rows"] * s["cols"] * 3 * (2 if enhance else 1)
+
+
+def cine_series(s):
+    return any(int(getattr(d, "NumberOfFrames", 1) or 1) > 1
+               or int(getattr(d, "NumberOfTemporalPositions", 1) or 1) > 1
+               or hasattr(d, "TriggerTime") or hasattr(d, "TemporalPositionIdentifier")
+               for d in s["items"])
+
+
+def stream_pack_series(s, progress=None):
+    count = frame_count(s)
+    sample_indices = set(np.linspace(0, count-1, min(5, count), dtype=int).tolist())
+    samples = []; mn = float("inf"); mx = -float("inf"); k = 0
+    for ds in s["items"]:
+        for f in iter_modality_frames(ds):
+            mn = min(mn, float(f.min())); mx = max(mx, float(f.max()))
+            if k in sample_indices: samples.append(f.copy())
+            k += 1
+            if progress and k % 10 == 0: progress(.5*k/count)
+    if k != count or not samples:
+        raise RuntimeError("Series frame count is inconsistent.")
+    info = series_info(samples)
+    del samples
+    scale = (max(mx, mn+1.0)-mn)/65535.0
+    items = []; k = 0
+    for ds in s["items"]:
+        for f in iter_modality_frames(ds):
+            u = np.clip(np.rint((f-mn)/scale), 0, 65535).astype("<u2")
+            items.append({"o":base64.b64encode(zlib.compress(u.tobytes(),3)).decode("ascii")})
+            k += 1
+            if progress and k % 10 == 0: progress(.5+.5*k/count)
+    return dict(off=mn, scale=scale, items=items), info, mn, mx
+
 
 def plane_name(normal):
     k = int(np.argmax(np.abs(normal)))
@@ -330,6 +392,9 @@ def read_zip(zbytes, max_member=400 * 1024 * 1024, progress=None):
     out, skipped = [], Counter()
     with zipfile.ZipFile(io.BytesIO(zbytes)) as z:
         infos = [i for i in z.infolist() if not i.is_dir()]
+        if sum(i.file_size for i in infos) > 2*1024*1024*1024:
+            raise RuntimeError("Archive exceeds the current temporary disk import budget (2 GiB). Export a smaller study selection; no images have been partially loaded.")
+        archive_owner = tempfile.TemporaryDirectory(prefix="dicom-study-")
         for n, info in enumerate(infos):
             base = info.filename.rsplit("/", 1)[-1]
             if "__MACOSX" in info.filename or base.startswith("."):
@@ -341,7 +406,12 @@ def read_zip(zbytes, max_member=400 * 1024 * 1024, progress=None):
                 skipped["file too large"] += 1
                 continue
             try:
-                ds = pydicom.dcmread(io.BytesIO(z.read(info)), force=True)
+                path = f"{archive_owner.name}/{n}.dcm"
+                with z.open(info) as src, open(path, "wb") as dst:
+                    shutil.copyfileobj(src, dst, length=1024*1024)
+                ds = pydicom.dcmread(path, force=True, defer_size=1024)
+                # Keep the temporary files alive while any indexed dataset is in use.
+                ds._archive_owner = archive_owner
                 if "PixelData" not in ds or not hasattr(ds, "Rows") or not hasattr(ds, "Columns"):
                     skipped["DICOM without image pixels (DICOMDIR, report ...)"] += 1
                     continue
@@ -353,25 +423,28 @@ def read_zip(zbytes, max_member=400 * 1024 * 1024, progress=None):
     return out, skipped
 
 def build_payload_series(s, enhance, params, progress=None):
+    streamed = cine_series(s) or payload_estimate(s, enhance) > 24*1024*1024
+    if payload_estimate(s, False) > 64*1024*1024:
+        raise RuntimeError("This series exceeds the current embedded viewer transport limit (64 MiB estimated). It was not partially loaded.")
     frames, errors = [], []
-    for index, ds in enumerate(s["items"], 1):
-        try:
-            frames += modality_frames(ds)
-        except Exception as exc:
-            errors.append((index, str(exc)))
-    if errors:
-        index, reason = errors[0]
-        raise RuntimeError(
-            f"{len(errors)} of {len(s['items'])} DICOM instances could not be decoded "
-            f"(first failure: instance {index}). Series not displayed to avoid an incomplete stack. {reason}"
-        )
-    if not frames:
-        raise RuntimeError("Series contains no image frames.")
+    if streamed:
+        packed, info, source_min, source_max = stream_pack_series(s, progress)
+    else:
+        for index, ds in enumerate(s["items"], 1):
+            try:
+                frames += modality_frames(ds)
+            except Exception as exc:
+                errors.append((index, str(exc)))
+        if errors:
+            index, reason = errors[0]
+            raise RuntimeError(f"{len(errors)} instances could not be decoded (first: {index}). Series not displayed to avoid an incomplete stack. {reason}")
+        if not frames: raise RuntimeError("Series contains no image frames.")
+        info = series_info(frames)
+        source_min = float(min(f.min() for f in frames)); source_max = float(max(f.max() for f in frames))
     a = s["items"][0]
     sp = _floats(getattr(a, "PixelSpacing", None) or [], 2) or [1.0, 1.0]
-    info = series_info(frames)
     enh = None
-    if enhance and info["sigma"] > 0:
+    if enhance and not streamed and info["sigma"] > 0:
         enh = []
         for k in range(len(frames)):
             enh.append(enhance_frame(frames, k, info, params))
@@ -394,12 +467,14 @@ def build_payload_series(s, enhance, params, progress=None):
             valid = abs(np.linalg.norm(r)-1) < .001 and abs(np.linalg.norm(c)-1) < .001 and abs(np.dot(r,c)) < .001
         geometry.append(dict(origin=ipp, row=iop[:3], col=iop[3:], normal=np.cross(r,c).tolist(),
                              spacing=spacing, ref=ref, study=study) if valid else None)
-    if len(geometry) != len(frames):
-        geometry = [None] * len(frames)
-    packed = pack_series(frames, enh)
+    count = len(packed["items"]) if streamed else len(frames)
+    if len(geometry) != count:
+        geometry = [None] * count
+    if not streamed:
+        packed = pack_series(frames, enh)
     pos = [slice_position(d, s["normal"]) for d in s["items"]]
-    if len(pos) != len(frames) or any(p is None for p in pos):
-        pos = [float(i) for i in range(len(frames))]
+    if len(pos) != count or any(p is None for p in pos):
+        pos = [float(i) for i in range(count)]
     wc = _first(getattr(a, "WindowCenter", None)); ww = _first(getattr(a, "WindowWidth", None))
     slope = _first(getattr(a, "RescaleSlope", None), 1.0) or 1.0
     icpt = _first(getattr(a, "RescaleIntercept", None), 0.0) or 0.0
@@ -407,8 +482,8 @@ def build_payload_series(s, enhance, params, progress=None):
     return dict(title=s["label"], modality=str(getattr(a, "Modality", "")).upper(), plane=plane_name(s["normal"]), rows=s["rows"], cols=s["cols"],
                 spacing=[float(sp[0]), float(sp[1])], geometry=geometry, sequence=str(getattr(a, "SeriesDescription", "") or getattr(a, "ProtocolName", "") or ""),
                 invert=str(getattr(a, "PhotometricInterpretation", "")).upper() == "MONOCHROME1",
-                pos=pos, hasEnh=bool(enh), snr=round(info["snr"], 1), sigma=info["sigma"],
-                wl=dict(auto=[info["lo"], info["hi"]], dicom=dicom_wl, full=[float(min(f.min() for f in frames)), float(max(f.max() for f in frames))]),
+                pos=pos, hasEnh=bool(enh), streamed=streamed, snr=round(info["snr"], 1), sigma=info["sigma"],
+                wl=dict(auto=[info["lo"], info["hi"]], dicom=dicom_wl, full=[source_min, source_max]),
                 **packed)
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -1013,13 +1088,19 @@ window.addEventListener('pagehide',()=>clearInterval(timer));show();state();
 
 
 def _cache_resource(fn):
-    return st.cache_resource(show_spinner=False)(fn) if st else fn
+    return st.cache_resource(show_spinner=False, max_entries=1, ttl=600)(fn) if st else fn
 
 @_cache_resource
 def load_index(file_hash, _zbytes, _progress=None):
     named, skipped = read_zip(_zbytes, progress=_progress)
     series, dup = group_series(named)
     return series, skipped, dup
+
+def embed_html(html, height):
+    if hasattr(st, "iframe"):
+        return st.iframe(html, height=height)
+    return st.components.v1.html(html, height=height, scrolling=False)
+
 
 def main():
     st.set_page_config(page_title="SD-DCM | Clinical Workstation", page_icon="◉", layout="wide")
@@ -1067,16 +1148,17 @@ def main():
     if up is None:
         st.markdown('<div class="study-strip"><b>No study loaded</b><span>Open a DICOM ZIP in the study browser</span>'
                     '<span class="right">Identifiers hidden by default</span></div>', unsafe_allow_html=True)
-        st.components.v1.html(build_empty_workspace(), height=760, scrolling=False)
+        embed_html(build_empty_workspace(), height=760)
         return
 
     zbytes = up.getvalue()
     fhash = hashlib.sha1(zbytes).hexdigest()
+    logging.getLogger("dicom_viewer").warning("DICOM import start: archive_bytes=%s", len(zbytes))
     
     loading = st.empty()
     with loading.container():
         progress_bar = st.progress(0.0, text="Reading DICOM images and grouping series...")
-        st.components.v1.html(build_loading_html(), height=420, scrolling=False)
+        embed_html(build_loading_html(), height=420)
     try:
         series, skipped, dup = load_index(fhash, zbytes,
             _progress=lambda fraction: progress_bar.progress(0.15 * fraction, text="Reading DICOM archive..."))
@@ -1116,14 +1198,27 @@ def main():
         series = study_groups[keys[selected_study]]
     labels = {item["label"] + f" [{item['uid'][-6:]}]": item for item in series}
     chosen = list(labels)
+    if sum(payload_estimate(s, bool(enhance) and not cine_series(s)) for s in series) > 64*1024*1024:
+        sb.warning("Large study: load selected series to keep the viewer within memory and transport limits.")
+        chosen = sb.multiselect("Series to load", list(labels), default=list(labels)[:1], key="series_selection_"+fhash)
+        st.info("Large-study mode: only selected series are loaded. Select more or different series in the sidebar.")
+    if not chosen:
+        loading.empty()
+        return
     sb.caption(f"{len(chosen)} series · All listed beside the image workspace")
 
     # Load Progress Vector mapping
     payloads = []
     progress_bar.progress(0.15, text="Preparing image workspace...")
     
+    planned = sum(payload_estimate(labels[name], bool(enhance) and not (cine_series(labels[name]) or payload_estimate(labels[name], bool(enhance)) > 24*1024*1024)) for name in chosen)
+    if planned > 64*1024*1024:
+        loading.empty()
+        st.error("Selected series exceed the current viewer transport budget. Select fewer series; no partial series will be displayed.")
+        return
     for idx, name in enumerate(chosen):
         s = labels[name]
+        logging.getLogger("dicom_viewer").warning("DICOM series prepare: index=%s frames=%s estimated_original_bytes=%s cine=%s", idx, frame_count(s), payload_estimate(s), cine_series(s))
         try:
             progress_bar.progress(0.15 + 0.85 * idx / len(chosen), text=f"Preparing series {idx + 1}/{len(chosen)}: {s['desc']}...")
             payloads.append(build_payload_series(s, bool(enhance), params,
@@ -1131,6 +1226,7 @@ def main():
                     0.15 + 0.85 * (current + fraction) / len(chosen),
                     text=f"Enhancing series {current + 1}/{len(chosen)}...")))
         except Exception as e:
+            logging.getLogger("dicom_viewer").error("Series preparation failed: index=%s frames=%s exception=%s", idx, frame_count(s), type(e).__name__)
             st.error(f"Could not prepare series {s['label']}: {e}")
             
     loading.empty()
@@ -1138,6 +1234,8 @@ def main():
     if not payloads:
         return
         
+    if any(p.get("streamed") for p in payloads) and enhance:
+        sb.caption("Cine/large series use original pixels and frame-by-frame loading; enhancement is skipped.")
     # Patient Demographics Banner Customization
     patient = None
     if show_ids:
@@ -1150,8 +1248,9 @@ def main():
         ])
         
     # Embed Diagnostic Matrix
+    logging.getLogger("dicom_viewer").warning("DICOM workspace ready: series=%s frames=%s", len(payloads), sum(len(p["items"]) for p in payloads))
     html, height = build_viewer_html(payloads, patient)
-    st.components.v1.html(html, height=height, scrolling=False)
+    embed_html(html, height=height)
 
 # ----------------------------------------------------------------------------------------------------------------
 #  Self-Test Diagnostic Entry Point Engine
