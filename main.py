@@ -365,38 +365,60 @@ def build_payload_series(s, enhance, params, progress=None):
 VIEWER_HTML = r"""
 <style>
  *{box-sizing:border-box} 
- body{margin:0;background:#080d14;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;font-size:12px;overflow-x:hidden}
+ body{margin:0;background:#090d16;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;font-size:12px;overflow-x:hidden}
  
  /* High-end Medical Workspace Toolbar */
- #bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:8px 16px;background:#111b26;border-bottom:1px solid #293b4b;position:sticky;top:0;z-index:100}
+ #bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:8px 16px;background:#111827;border-bottom:1px solid #1f2937;position:sticky;top:0;z-index:100}
  .brand-tag{display:flex;align-items:center;gap:6px;font-weight:700;color:#38bdf8;letter-spacing:0.5px;font-size:13px;border-right:1px solid #374151;padding-right:12px}
  .brand-tag span{color:#94a3b8;font-weight:400}
  
- .tool-group{display:flex;align-items:center;gap:4px;background:#162431;padding:3px;border-radius:6px;border:1px solid #374151}
+ .tool-group{display:flex;align-items:center;gap:4px;background:#1f2937;padding:3px;border-radius:6px;border:1px solid #374151}
  .tool-label{font-size:11px;color:#94a3b8;padding:0 6px;text-transform:uppercase;font-weight:600;letter-spacing:0.3px}
  
  label{display:flex;gap:6px;align-items:center;cursor:pointer;color:#cbd5e1;padding:4px 8px;border-radius:4px;transition:all 0.15s ease}
  label:hover{background:#2d3748}
  #bar b{color:#38bdf8}
  
- #grid{display:grid;grid-template-columns:repeat(__COLS__,1fr);gap:10px;padding:10px;background:#080d14}
- .panel{border-radius:7px;padding:5px;background:#0b131d;border:1px solid #2a3a49;position:relative;display:flex;flex-direction:column}
+ #grid{display:grid;grid-template-columns:repeat(__COLS__,1fr);gap:10px;padding:10px;background:#090d16}
+ .panel{border-radius:8px;padding:6px;background:#0f172a;border:1px solid #1e293b;position:relative;display:flex;flex-direction:column}
  .panel.active-viewport{border-color:#38bdf8;box-shadow:0 0 0 1px #38bdf8}
  
- .hd{display:flex;gap:6px;align-items:center;margin-bottom:6px;background:#14202b;padding:6px 8px;border-radius:4px}
+ .hd{display:flex;gap:6px;align-items:center;margin-bottom:6px;background:#1e293b;padding:4px 8px;border-radius:4px}
  .ttl{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#f8fafc;font-weight:600;font-size:11px;letter-spacing:.3px}
  
- button,select{background:#1b2a38;color:#e0eaf2;border:1px solid #344758;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;transition:all 0.10s ease}
+ button,select{background:#2d3748;color:#f1f5f9;border:1px solid #4a5568;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;transition:all 0.10s ease}
  button:hover,select:hover{background:#4facfe;color:#090d16;border-color:#4facfe}
  button.on{background:#0ea5e9;border-color:#0ea5e9;color:#ffffff;font-weight:600}
  
  canvas{width:100%;height:__PANEL_H__px;display:block;background:#000;border-radius:4px;cursor:crosshair;touch-action:none}
  .st{margin-top:4px;color:#94a3b8;font:11px ui-monospace,Menlo,Consolas,monospace;min-height:16px;background:#090d16;padding:4px 8px;border-radius:4px;border:1px solid #1e293b}
  .pat-banner{background:#1e1b4b;border:1px solid #4338ca;color:#c7d2fe;padding:4px 10px;border-radius:4px;font-weight:600;font-size:11px;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px}
+
+ /* Workstation refinement */
+ body{background:#0b1017}
+ #bar{background:#111923;gap:8px;padding:8px;border:1px solid #263241;border-radius:6px}
+ .brand-tag{font-size:11px;color:#70c8df;letter-spacing:1px}
+ .tool-group{background:#16212e;border-color:#263241;flex-wrap:wrap}
+ .tool-label{font-size:9px;letter-spacing:1px}
+ #grid{background:#0b1017;padding:10px 0;gap:8px}
+ .panel{padding:0;border-radius:5px;overflow:hidden;background:#000;min-width:0}
+ .panel.active-viewport{border-color:#70c8df;box-shadow:0 0 0 1px #70c8df}
+ .hd{flex-wrap:wrap;border-radius:0;background:#111923;padding:8px;margin:0}
+ .ttl{flex-basis:100%;font-size:12px;margin-bottom:3px}
+ button,select{background:#16212e;border-color:#334254;padding:5px 8px}
+ button:hover,select:hover{background:#234255;color:#edf4fb;border-color:#70c8df}
+ button.on{background:#234255;border-color:#70c8df}
+ button:focus-visible,select:focus-visible,label:focus-within{outline:2px solid #70c8df;outline-offset:2px}
+ input{accent-color:#70c8df}
+ canvas{border-radius:0}
+ .st{border:0;border-top:1px solid #263241;border-radius:0;margin:0;line-height:1.5;min-height:40px}
+ .pat-banner{white-space:normal;max-width:none;flex-basis:100%;margin:0;background:#16212e;border-color:#334254;color:#b7c6d8}
+ @media(max-width:900px){#grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tool-label{display:none}}
+ @media(max-width:600px){#grid{grid-template-columns:1fr}.brand-tag{display:none}}
 </style>
 
 <div id="bar">
-  <div class="brand-tag">SD-DCM <span>IMAGE VIEWER</span></div>
+  <div class="brand-tag">SD-DCM <span>WORKSTATION</span></div>
 </div>
 <div id="grid"></div>
 
@@ -490,15 +512,15 @@ async function roiStats(i,m){
 
 const bar=document.getElementById('bar');
 const syncG=$('div',{className:'tool-group'});
-syncG.append($('div',{className:'tool-label',textContent:'Navigation'}));
+syncG.append($('div',{className:'tool-label',textContent:'LINK'}));
 syncG.append(chk('Scroll Linked','sync',true));
 syncG.append(chk('W/L Linked','link',false));
 bar.append(syncG);
 
 const toolG=$('div',{className:'tool-group'});
-toolG.append($('div',{className:'tool-label',textContent:'Tools'}));
-[{t:'wl',l:'Window / Level'},{t:'dist',l:'Distance'},{t:'roi',l:'ROI'}].forEach((x,k)=>{
-  const r=$('input',{type:'radio',name:'tool',checked:k===0});
+toolG.append($('div',{className:'tool-label',textContent:'TOOLS'}));
+[{t:'wl',l:'Window/Level'},{t:'pan',l:'Pan'},{t:'dist',l:'Distance'},{t:'roi',l:'ROI'}].forEach((x,k)=>{
+  const r=$('input',{type:'radio',name:'tool',checked:k===0,ariaLabel:x.l});
   r.onchange=()=>{opt.tool=x.t;};
   toolG.append($('label',null,[r,document.createTextNode(x.l)]));
 });
@@ -509,7 +531,7 @@ const clr=$('button',{textContent:'Clear measurements'});clr.onclick=()=>{S.forE
 if(P.patient){bar.append($('div',{className:'pat-banner',textContent:P.patient}));}
 
 function chk(label,key,init){
-  const c=$('input',{type:'checkbox',checked:init});
+  const c=$('input',{type:'checkbox',checked:init,ariaLabel:label});
   c.onchange=()=>{opt[key]=c.checked;};
   return $('label',null,[c,document.createTextNode(label)]);
 }
@@ -589,51 +611,50 @@ drawAll();
 </script>
 """
 
-def build_viewer_html(series_payloads, patient_text=None, panel_height=460):
+def build_viewer_html(series_payloads, patient_text=None, panel_height=430):
     n = len(series_payloads)
     cols = 3 if n >= 3 else max(1, n)
     payload = dict(series=series_payloads, patient=patient_text)
-    data = json.dumps(payload, separators=(",", ":")).replace("</", "<\\/")
+    data = json.dumps(payload, separators=(",", ":")).replace("</", r"<\/")
     html = (VIEWER_HTML.replace("__PAYLOAD__", data).replace("__COLS__", str(cols)).replace("__PANEL_H__", str(panel_height)))
     rows = -(-n // cols)
-    return html, rows * (panel_height + 80) + 110
+    return html, rows * (panel_height + 110) + 160
 
 # ----------------------------------------------------------------------------------------------------------------
 #  Unified Application Presentation Layer (Streamlit Frontend Hub)
 # ----------------------------------------------------------------------------------------------------------------
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-:root {color-scheme:dark;--base:#080d14;--surface:#111a25;--border:#253343;--muted:#8c9daf;--accent:#4cb8e8}
-html,body,[data-testid="stApp"],[data-testid="stAppViewContainer"],.stApp {background:var(--base)!important;color:#e5edf5!important;font-family:Inter,system-ui,sans-serif!important}
-[data-testid="stHeader"]{background:rgba(8,13,20,.9)!important}
-[data-testid="stSidebar"]{background:#101923!important;border-right:1px solid var(--border)}
-[data-testid="stSidebarUserContent"]{padding-top:1.5rem}
-[data-testid="stMainBlockContainer"]{padding-top:1.25rem;max-width:100%!important;padding-left:2rem;padding-right:2rem}
-h1,h2,h3{letter-spacing:-.025em!important}
-[data-testid="stFileUploader"]{border:1px dashed #395065;border-radius:10px;padding:6px;background:#121f2b}
-[data-testid="stMultiSelect"] [data-baseweb="select"]>div{background:#111d29;border-color:#304153}
-[data-testid="stMetric"]{background:#111a25;border:1px solid #253343;border-radius:9px;padding:12px 16px}
-[data-testid="stMetricLabel"]{color:#93a5b8}
-[data-testid="stMetricValue"]{font-size:1.35rem}
-.workspace-header{display:flex;justify-content:space-between;align-items:center;gap:16px;border-bottom:1px solid #273747;padding:8px 0 18px;margin-bottom:22px}
-.workspace-kicker{font-size:10px;font-weight:700;color:#57bde8;letter-spacing:.16em;text-transform:uppercase;margin-bottom:5px}
-.workspace-title{font-size:24px;font-weight:700;letter-spacing:-.04em;color:#edf4fb;line-height:1.25}
-.workspace-subtitle{font-size:12px;color:#8fa2b6;margin-top:6px}
-.workspace-status{display:inline-flex;align-items:center;gap:8px;font-size:11px;color:#a5cbbb;border:1px solid #2c594c;background:#10251f;padding:8px 11px;border-radius:6px;white-space:nowrap}
-.workspace-status:before{content:'';display:block;width:6px;height:6px;border-radius:50%;background:#52c996}
-.section-eyebrow{color:#6fb9da;text-transform:uppercase;font-size:10px;letter-spacing:.14em;font-weight:700;margin:20px 0 7px}
-.section-title{font-size:17px;color:#edf3f9;font-weight:650;margin-bottom:7px}
-.empty-workspace{min-height:300px;background:radial-gradient(ellipse at 50% 10%,#182b3c 0%,#0d1620 54%,#0a111a 100%);border:1px solid #263748;border-radius:12px;display:flex;align-items:center;justify-content:center;text-align:center;padding:42px 20px;margin:14px 0 18px}
-.empty-symbol{font-size:37px;color:#5abce5;margin-bottom:16px}
-.empty-title{font-size:21px;font-weight:650;color:#edf4fa;margin-bottom:8px}
-.empty-description{font-size:13px;color:#96a8b8;line-height:1.7;max-width:470px}
-.stat-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:8px 0 17px}
-.stat-card{background:#101a25;border:1px solid #253444;border-radius:9px;padding:12px 16px}
-.stat-val{font-size:20px;color:#e7f3fa;font-weight:650;letter-spacing:-.03em}
-.stat-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:#8498ac;margin-top:6px}
-.sidebar-note{font-size:11px;line-height:1.65;color:#91a4b7;padding:10px 0}
-@media(max-width:850px){.stat-row{grid-template-columns:repeat(2,minmax(0,1fr))}.workspace-header{align-items:flex-start}.workspace-title{font-size:20px}}
+html, body, [data-testid="stAppViewContainer"] {
+    background:#0b1017; color:#e4eaf2; font-family:Arial,sans-serif;
+}
+[data-testid="stHeader"] { background:#0b1017; }
+[data-testid="stSidebar"] { background:#111923; border-right:1px solid #263241; }
+[data-testid="stSidebar"] * { color:#dbe5ef; }
+[data-testid="stMainBlockContainer"] { padding-top:1.3rem; padding-bottom:1rem; }
+[data-testid="stSidebarUserContent"] { padding-top:1.4rem; }
+[data-testid="stWidgetLabel"] p { font-size:13px; color:#b7c6d8; }
+[data-baseweb="select"] > div, [data-testid="stFileUploaderDropzone"] {
+    background:#16212e; color:#e4eaf2; border-color:#334254;
+}
+[data-testid="stExpander"] { background:#111923; border-color:#263241; }
+.main-header { display:flex; justify-content:space-between; align-items:center;
+    gap:12px; padding:16px 0 20px; margin-bottom:16px; border-bottom:1px solid #263241; }
+.main-header h1 { margin:0; font-size:23px; font-weight:600; color:#edf4fb; letter-spacing:-.5px; }
+.eyebrow { color:#70c8df; font-size:10px; letter-spacing:2px; font-weight:600; margin-bottom:5px; }
+.subtitle { color:#8ea2b8; font-size:12px; margin-top:5px; }
+.status-badge { color:#b6c7d9; border:1px solid #334254; border-radius:5px;
+    padding:7px 10px; font-size:11px; white-space:nowrap; background:#111923; }
+.stat-card { border:1px solid #263241; border-radius:6px; padding:12px 16px; background:#111923; }
+.stat-val { font-size:20px; font-weight:600; color:#e4eaf2; }
+.stat-lbl { font-size:11px; color:#8ea2b8; margin-top:3px; }
+.empty-state { border:1px solid #263241; border-radius:8px; background:#111923;
+    padding:48px 32px; margin:14px 0 20px; }
+.empty-state h2 { font-size:27px; font-weight:500; color:#edf4fb; margin:12px 0; }
+.empty-state p { color:#8ea2b8; max-width:560px; font-size:14px; line-height:1.7; }
+.workflow { display:flex; flex-wrap:wrap; gap:10px; margin-top:26px; }
+.workflow span { border:1px solid #334254; padding:9px 12px; border-radius:5px; color:#b7c6d8; font-size:12px; }
+@media(max-width:640px) { .main-header { align-items:flex-start; flex-direction:column; } .empty-state {padding:24px;} }
 </style>
 """
 
@@ -647,84 +668,111 @@ def load_index(file_hash, _zbytes):
     return series, skipped, dup
 
 def main():
-    st.set_page_config(page_title="SD-DCM Enterprise Workstation", page_icon="🧠", layout="wide")
+    st.set_page_config(page_title="SD-DCM | Clinical Workstation", page_icon="◉", layout="wide")
     st.markdown(CSS, unsafe_allow_html=True)
     
-    st.markdown('''<div class="workspace-header"><div><div class="workspace-kicker">SD-DCM / Clinical Imaging</div><div class="workspace-title">Diagnostic Workstation</div><div class="workspace-subtitle">Local DICOM study review · Multiplanar series workspace</div></div><div class="workspace-status">Local session</div></div>''', unsafe_allow_html=True)
-
+    st.markdown(
+        '<div class="main-header"><div><div class="eyebrow">SD-DCM / IMAGING WORKSPACE</div>'
+        '<h1>Clinical workstation</h1><div class="subtitle">Study review · Multi-series comparison · Image tools</div></div>'
+        '<span class="status-badge">ZIP import · Research &amp; review</span></div>',
+        unsafe_allow_html=True,
+    )
     sb = st.sidebar
-    sb.markdown("### Study & processing")
-    up = sb.file_uploader("Open DICOM study (.zip)", type=["zip"], help="Accepts local files or directory mappings compressed into a standard zip container.")
-    
-    enhance = sb.toggle("Enable image enhancement", value=True, help="Triggers noise-aware Rician denoising and spatial structural sharpening algorithms.")
-    preset = sb.selectbox("Enhancement preset", list(PRESETS) + ["Custom Parameters"], index=1)
-    
-    if preset == "Custom Parameters":
-        base = PRESETS["Balanced"]
-        params = dict(
-            denoise=sb.slider("Noise Attenuation", 0, 100, base["denoise"]),
-            detail=sb.slider("Structural Preservation", 0, 100, base["detail"]),
-            sharpen=sb.slider("Edge Gate Definition", 0, 100, base["sharpen"]),
-            grain=sb.slider("Micro-Texture Retention", 0, 100, base["grain"]),
-            shading=sb.slider("Bias Shading Field Correction", 0, 100, base["shading"])
-        )
-    else:
-        params = dict(PRESETS[preset])
-        
-    show_ids = sb.checkbox("Show patient identifiers in viewer", value=False)
-    
+    sb.markdown("### Study browser")
+    sb.caption("01 / IMPORT")
+    up = sb.file_uploader("Open DICOM study", type=["zip"],
+                          help="Upload a ZIP archive containing DICOM images.")
+    sb.caption("Files are processed by the Streamlit server hosting this app.")
+    sb.divider()
+    sb.caption("02 / IMAGE PROCESSING")
+    enhance = sb.toggle("Enable enhancement", value=True,
+                        help="Creates a processed version. Use Enhance in each viewport to compare with the original.")
+    with sb.expander("Enhancement settings", expanded=False):
+        preset = st.selectbox("Preset", list(PRESETS) + ["Custom Parameters"], index=1,
+                              disabled=not enhance)
+        if preset == "Custom Parameters":
+            base = PRESETS["Balanced"]
+            params = dict(
+                denoise=st.slider("Denoising", 0, 100, base["denoise"], disabled=not enhance),
+                detail=st.slider("Detail retention", 0, 100, base["detail"], disabled=not enhance),
+                sharpen=st.slider("Sharpening", 0, 100, base["sharpen"], disabled=not enhance),
+                grain=st.slider("Texture retention", 0, 100, base["grain"], disabled=not enhance),
+                shading=st.slider("Shading correction", 0, 100, base["shading"], disabled=not enhance),
+            )
+        else:
+            params = dict(PRESETS[preset])
+    show_ids = sb.checkbox("Show patient identifiers", value=False,
+                           help="Identifiers are hidden in the viewer by default. This does not anonymize the uploaded files.")
+    sb.divider()
+    with sb.expander("Mouse & keyboard guide"):
+        st.markdown("**Scroll** · Browse images\n\n**Ctrl / Cmd + scroll** · Zoom\n\n"
+                    "**Middle drag / Pan tool** · Move image\n\n**Shift + drag** · Distance\n\n"
+                    "**Double-click / R** · Reset view\n\n**Space** · Cine playback\n\n"
+                    "**I** · Invert · **E** · Enhancement")
+
     if up is None:
-        st.markdown('''<div class="section-eyebrow">Workspace</div><div class="section-title">No study loaded</div><div class="empty-workspace"><div><div class="empty-symbol">◎</div><div class="empty-title">Your imaging workspace is ready</div><div class="empty-description">Import a ZIP archive containing DICOM images from the left sidebar. Once loaded, select up to six series to review in synchronized diagnostic viewports.</div></div></div>''', unsafe_allow_html=True)
-        st.caption("Local processing · Original pixel data retained · For research and review; not validated for primary diagnosis")
+        st.markdown(
+            '<div class="empty-state"><div class="eyebrow">READY TO REVIEW</div>'
+            '<h2>Your images. A focused workspace.</h2>'
+            '<p>Open a DICOM ZIP archive from the study browser to begin. '
+            'Select series, compare images side by side, and keep image controls within reach.</p>'
+            '<div class="workflow"><span>01 &nbsp; Open study</span><span>02 &nbsp; Select series</span>'
+            '<span>03 &nbsp; Review images</span></div></div>', unsafe_allow_html=True,
+        )
+        st.caption("Available tools: window/level, zoom, pan, distance, ROI statistics, linked scrolling and cine.")
         return
 
     zbytes = up.getvalue()
     fhash = hashlib.sha1(zbytes).hexdigest()
     
-    with st.spinner("Executing DICOM header ingestion and instance grouping..."):
+    with st.spinner("Reading DICOM images and grouping series..."):
         series, skipped, dup = load_index(fhash, zbytes)
         
     if not series:
-        st.error("Data Ingestion Failure: No valid image slices or readable pixel matrices detected within target archive.")
+        st.error("No readable DICOM images found. Check the ZIP contents and pixel-data support.")
         return
         
-    st.markdown(f'''<div class="stat-row"><div class="stat-card"><div class="stat-val">{len(series)}</div><div class="stat-lbl">Series</div></div><div class="stat-card"><div class="stat-val">{sum(len(x["items"]) for x in series)}</div><div class="stat-lbl">Instances</div></div><div class="stat-card"><div class="stat-val">{series[0]["rows"]} × {series[0]["cols"]}</div><div class="stat-lbl">First series matrix</div></div><div class="stat-card"><div class="stat-val">Local</div><div class="stat-lbl">Data source</div></div></div>''', unsafe_allow_html=True)
-
+    # Ingest Metrics Panel
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.markdown(f'<div class="stat-card"><div class="stat-val">{len(series)}</div><div class="stat-lbl">Series</div></div>', unsafe_allow_html=True)
+    with c2: st.markdown(f'<div class="stat-card"><div class="stat-val">{sum(len(s["items"]) for s in series)}</div><div class="stat-lbl">DICOM instances</div></div>', unsafe_allow_html=True)
+    with c3: st.markdown(f'<div class="stat-card"><div class="stat-val">{series[0]["rows"]}x{series[0]["cols"]}</div><div class="stat-lbl">First series matrix</div></div>', unsafe_allow_html=True)
+    with c4: st.markdown(f'<div class="stat-card"><div class="stat-val">ZIP archive</div><div class="stat-lbl">Source</div></div>', unsafe_allow_html=True)
+    
+    
     # Study Browser Ingestion Logs
     if skipped or dup:
         with st.expander("Import details", expanded=False):
             for why, n in skipped.items():
                 st.markdown(f"⚠️ *Skipped Entry:* `{n} instances` flagged as: **{why}**")
             if dup:
-                st.markdown(f"ℹ️ *De-duplication Engine:* Dropped `{dup}` redundant SOPInstanceUID iterations.")
+                st.markdown(f"Duplicate instances removed: `{dup}` (matching SOPInstanceUID).")
 
     # High-Density Series Selection Hub
     labels = {s["label"] + f"  [{s['uid'][-6:]}]": s for s in series}
     
-    st.markdown('<div class="section-eyebrow">Study browser</div><div class="section-title">Select series to display</div>', unsafe_allow_html=True)
-    chosen = st.multiselect(
-        "Series",
-        list(labels),
-        default=list(labels)[:min(3, len(labels))],
-        help="Select sequences to map onto the diagnostic viewer layout grid."
+    sb.caption("03 / SERIES")
+    chosen = sb.multiselect(
+        "Visible series", list(labels), default=list(labels)[:min(3, len(labels))],
+        max_selections=MAX_PANELS, key=f"series_{fhash}",
+        help="Select up to six series. Each selected series opens in a separate viewport.",
     )
-    chosen = chosen[:MAX_PANELS]
-    
+    st.markdown("#### Image workspace")
     if not chosen:
-        st.warning("Action Required: Please check one or more sequence matrices from the list above to populate the viewports.")
+        st.info("Select a series in the study browser to open a viewport.")
         return
-        
+
     # Load Progress Vector mapping
     payloads = []
-    progress_bar = st.progress(0.0, text="Preparing viewports...")
+    progress_bar = st.progress(0.0, text="Preparing image workspace...")
     
     for idx, name in enumerate(chosen):
         s = labels[name]
         try:
-            progress_bar.progress((idx) / len(chosen), text=f"Preparing {s['desc']}...")
+            progress_bar.progress((idx) / len(chosen), text=f"Preparing series: {s['desc']}...")
             payloads.append(build_payload_series(s, bool(enhance), params))
         except Exception as e:
-            st.error(f"Render Thread Exception on structural parsing of {s['label']}: {e}")
+            st.error(f"Could not prepare series {s['label']}: {e}")
             
     progress_bar.empty()
     
@@ -742,7 +790,6 @@ def main():
             f"Scanner: {getattr(a, 'Manufacturer', 'N/A')}"
         ])
         
-    st.markdown('<div class="section-eyebrow">Image review</div>', unsafe_allow_html=True)
     # Embed Diagnostic Matrix
     html, height = build_viewer_html(payloads, patient)
     st.components.v1.html(html, height=height, scrolling=True)
