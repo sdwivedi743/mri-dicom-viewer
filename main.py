@@ -5,78 +5,96 @@ import numpy as np
 import zipfile
 import io
 
-st.set_page_config(page_title="MRI DICOM Viewer", page_icon="🏥", layout="centered")
-st.title("🏥 MRI DICOM Viewer")
-st.write("Upload an individual DICOM file or a **.zip folder** containing images.")
+st.set_page_config(page_title="Advanced MRI DICOM Viewer", page_icon="🧠", layout="centered")
+st.title("🧠 Advanced MRI DICOM Viewer")
+st.write("Upload a `.zip` folder containing your MRI scan series.")
 
-# Accept any uploaded file format
-uploaded_file = st.file_uploader("Choose a DICOM file or a ZIP archive")
+uploaded_file = st.file_uploader("Drop your ZIP folder here")
 
 if uploaded_file is not None:
-    dicom_files = {}
+    # Dictionary structure: { "Series Name": [ (InstanceNumber, dicom_dataset), ... ] }
+    series_groups = {}
 
-    # Check if the uploaded file is a ZIP folder
     if zipfile.is_zipfile(uploaded_file):
-        with zipfile.ZipFile(uploaded_file) as z:
-            # Go through every file inside the zip archive
-            for file_info in z.infolist():
-                # Ignore folder names, look only at files
-                if not file_info.is_dir():
-                    try:
-                        with z.open(file_info) as f:
-                            # Read bytes into memory
-                            bytes_data = f.read()
-                            # Use force=True to read files even if they lack the standard header
-                            dcm = pydicom.dcmread(io.BytesIO(bytes_data), force=True)
-                            
-                            # If it looks like a valid DICOM image with pixel data, save it
-                            if hasattr(dcm, 'pixel_array'):
-                                dicom_files[file_info.filename] = dcm
-                    except Exception:
-                        continue
+        with st.spinner("Unzipping and sorting MRI sequences... Please wait."):
+            with zipfile.ZipFile(uploaded_file) as z:
+                for file_info in z.infolist():
+                    if not file_info.is_dir():
+                        try:
+                            with z.open(file_info) as f:
+                                bytes_data = f.read()
+                                dcm = pydicom.dcmread(io.BytesIO(bytes_data), force=True)
+                                
+                                if hasattr(dcm, 'pixel_array'):
+                                    # Group by Series Description (e.g., T2, FLAIR). Fallback to Series Instance UID if blank.
+                                    series_name = getattr(dcm, 'SeriesDescription', None)
+                                    if not series_name or str(series_name).strip() == "":
+                                        series_name = f"Series {getattr(dcm, 'SeriesNumber', 'Unknown')}"
+                                    
+                                    # Get slice sorting number
+                                    instance_num = int(getattr(dcm, 'InstanceNumber', 0))
+                                    
+                                    if series_name not in series_groups:
+                                        series_groups[series_name] = []
+                                    series_groups[series_name].append((instance_num, dcm))
+                        except Exception:
+                            continue
     else:
-        # If it's a single file instead of a zip
-        try:
-            dcm = pydicom.dcmread(uploaded_file, force=True)
-            if hasattr(dcm, 'pixel_array'):
-                dicom_files[uploaded_file.name] = dcm
-        except Exception as e:
-            st.error(f"Could not read this file: {e}")
+        st.error("Please upload a folder packed as a .zip file.")
 
-    # Process and display found images
-    if dicom_files:
-        st.success(f"Successfully found {len(dicom_files)} medical image(s)!")
+    if series_groups:
+        st.success(f"Successfully loaded {len(series_groups)} MRI sequence(s)!")
         
-        # Create a dropdown menu if multiple files exist
-        selected_filename = st.selectbox("Select an image to view:", list(dicom_files.keys()))
-        dicom_data = dicom_files[selected_filename]
-
-        try:
-            # Convert raw pixel data to viewable image
-            pixel_array = dicom_data.pixel_array.astype(float)
+        # 1. FREELY SELECT THE MRI SEQUENCE / SERIES
+        selected_series = st.selectbox("🎯 Select MRI Sequence:", list(series_groups.keys()))
+        
+        # Sort the slices of the chosen sequence in correct order (1, 2, 3...)
+        current_series_slices = sorted(series_groups[selected_series], key=lambda x: x[0])
+        total_slices = len(current_series_slices)
+        
+        # 2. SCROLL THROUGH IMAGES (SLICE SELECTOR)
+        if total_slices > 1:
+            slice_index = st.slider("🎞️ Scroll Through Slices:", 1, total_slices, 1) - 1
+        else:
+            slice_index = 0
+            st.info("This sequence only contains a single image slice.")
             
-            # Safe normalization to prevent math errors
-            if pixel_array.max() == pixel_array.min():
-                scaled_image = np.zeros(pixel_array.shape)
-            else:
-                scaled_image = ((pixel_array - pixel_array.min()) / (pixel_array.max() - pixel_array.min())) * 255.0
-                
-            final_image = Image.fromarray(scaled_image.astype(np.uint8))
+        # Get the specific slice dataset chosen by the sliders
+        _, dicom_data = current_series_slices[slice_index]
+        pixel_array = dicom_data.pixel_array.astype(float)
+        
+        # 3. CONTRAST ADJUSTMENT SLIDERS
+        st.subheader("🎛️ Image Controls")
+        col_c1, col_c2 = st.columns(2)
+        
+        # Use medical Windowing defaults if available, otherwise calculate fallback ranges
+        default_window = float(dicom_data.WindowWidth[0] if isinstance(getattr(dicom_data, 'WindowWidth', None), (list, pydicom.multival.MultiValue)) else getattr(dicom_data, 'WindowWidth', pixel_array.max() - pixel_array.min()))
+        default_level = float(dicom_data.WindowCenter[0] if isinstance(getattr(dicom_data, 'WindowCenter', None), (list, pydicom.multival.MultiValue)) else getattr(dicom_data, 'WindowCenter', (pixel_array.max() + pixel_array.min()) / 2))
+        
+        with col_c1:
+            window_width = st.slider("Contrast (Window Width):", 1.0, float(pixel_array.max()*1.5), float(default_window))
+        with col_c2:
+            window_level = st.slider("Brightness (Window Level):", float(pixel_array.min()), float(pixel_array.max()), float(default_level))
             
-            # Display image
-            st.image(final_image, caption=f"Viewing: {selected_filename}", use_container_width=True)
+        # Apply the Contrast Window/Level calculations
+        lower_bound = window_level - (window_width / 2.0)
+        upper_bound = window_level + (window_width / 2.0)
+        
+        # Clip values outside our window and scale to normal image range (0 - 255)
+        pixel_array = np.clip(pixel_array, lower_bound, upper_bound)
+        if upper_bound != lower_bound:
+            scaled_image = ((pixel_array - lower_bound) / (upper_bound - lower_bound)) * 255.0
+        else:
+            scaled_image = np.zeros(pixel_array.shape)
             
-            # Display patient details
-            st.subheader("📋 Patient & Scan Information")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write(f"**Patient Name:** {getattr(dicom_data, 'PatientName', 'Anonymous')}")
-                st.write(f"**Patient ID:** {getattr(dicom_data, 'PatientID', 'N/A')}")
-            with col2:
-                st.write(f"**Modality:** {getattr(dicom_data, 'Modality', 'N/A')}")
-                st.write(f"**Study Date:** {getattr(dicom_data, 'StudyDate', 'N/A')}")
-                
-        except Exception as e:
-            st.error(f"Error displaying image data: {e}")
+        final_image = Image.fromarray(scaled_image.astype(np.uint8))
+        
+        # Display the final interactive image
+        st.image(final_image, caption=f"{selected_series} — Slice {slice_index + 1} of {total_slices}", use_container_width=True)
+        
+        # Patient Data Table
+        st.subheader("📋 Metadata Info")
+        st.text(f"Patient Name: {getattr(dicom_data, 'PatientName', 'Anonymous')}\nModality: {getattr(dicom_data, 'Modality', 'MR')}")
     else:
-        st.error("No viewable DICOM images found inside the uploaded file. Ensure they contain pixel data.")
+        if uploaded_file is not None:
+            st.error("No valid DICOM sequences with scan images found in this ZIP archive.")
