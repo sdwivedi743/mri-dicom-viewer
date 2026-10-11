@@ -13,6 +13,7 @@ import hashlib
 import logging
 import tempfile
 import shutil
+from html import escape
 import io
 import json
 import sys
@@ -480,7 +481,7 @@ def build_payload_series(s, enhance, params, progress=None):
     icpt = _first(getattr(a, "RescaleIntercept", None), 0.0) or 0.0
     dicom_wl = [wc - ww / 2, wc + ww / 2] if (wc is not None and ww) else None
     return dict(title=s["label"], modality=str(getattr(a, "Modality", "")).upper(), plane=plane_name(s["normal"]), rows=s["rows"], cols=s["cols"],
-                spacing=[float(sp[0]), float(sp[1])], geometry=geometry, sequence=str(getattr(a, "SeriesDescription", "") or getattr(a, "ProtocolName", "") or ""),
+                spacing=[float(sp[0]), float(sp[1])], memoryId=hashlib.sha256(f"{s['uid']}|{s['desc']}|{s['rows']}|{s['cols']}".encode()).hexdigest(), spacingKnown=bool(_floats(getattr(a, "PixelSpacing", None) or [], 2)), thickness=_first(getattr(a, "SliceThickness", None)), geometry=geometry, sequence=str(getattr(a, "SeriesDescription", "") or getattr(a, "ProtocolName", "") or ""),
                 invert=str(getattr(a, "PhotometricInterpretation", "")).upper() == "MONOCHROME1",
                 pos=pos, hasEnh=bool(enh), streamed=streamed, snr=round(info["snr"], 1), sigma=info["sigma"],
                 wl=dict(auto=[info["lo"], info["hi"]], dicom=dicom_wl, full=[source_min, source_max]),
@@ -564,7 +565,10 @@ P.series=Array.from({length:16},(_,i)=>i<Math.min(4,catalog.length)?catalog[i]:n
 const PH=__PANEL_H__, N=16;
 let layoutRows=2,layoutCols=2;
 const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),lo:s.wl.auto[0],hi:s.wl.auto[1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null,ctLike:false,ctContrast:1.25,ctSharp:.25,ctRestore:null});});
-const opt={sync:true,link:false,tool:'wl',overlays:true,refs:true};
+const opt={sync:true,link:false,tool:'wl',overlays:true,refs:true,viewLink:false};
+function seriesKey(s){return s.memoryId||String(catalog.indexOf(s));}
+const displayMemory=new Map();let memoryTimer;
+try{if(P.studyKey){const entries=JSON.parse(sessionStorage.getItem('dicom-display-'+P.studyKey)||'[]');if(Array.isArray(entries))for(const [k,v] of entries)if(typeof k==='string'&&catalog.some(s=>seriesKey(s)===k)&&v&&typeof v==='object')displayMemory.set(k,v);}}catch(e){}
 let hover=0;
 
 const $=(t,a,c)=>{const e=document.createElement(t);if(a)Object.assign(e,a);if(c)c.forEach(x=>e.append(x));return e;};
@@ -624,16 +628,54 @@ function locatePoint(i,x,y){const source=geom(i);if(!source){readingNotice.textC
 
 function nearestOtherPlanes(i,source,point){
  let count=0;
+ S.forEach(st=>st.matchPoint=null);if(geom(i)===source)markCorrespondence(i,point);
  for(let j=0;j<N;j++){
   const series=P.series[j];if(j===i||!series||S[j].panel.hidden)continue;
   // Match only other planes. The source and parallel series stay at their current images.
   const candidates={...series,geometry:(series.geometry||[]).map(g=>g&&Math.abs(dot(source.normal,g.normal))<.999?g:null)};
   const k=nearestSlice(candidates,source,point,false);
-  if(k>=0){cancelAngle(j);S[j].idx=k;count++;}
+  if(k>=0){cancelAngle(j);S[j].idx=k;markCorrespondence(j,point);count++;}
  }
+ expireMarkers();
  showNearestStatus(count?'Nearest images shown in '+count+' other-plane viewport(s).':'No compatible slice in another open plane covers this point.');
  drawAll();return count;
 }
+
+let markerTimer;
+function markCorrespondence(i,point){const st=S[i];st.matchPoint={point,idx:st.idx,expires:performance.now()+4500};}
+function expireMarkers(){clearTimeout(markerTimer);markerTimer=setTimeout(()=>{S.forEach(st=>st.matchPoint=null);drawAll();},4600);}
+function drawPointMarker(i,ctx,dpr){const st=S[i],m=st.matchPoint,g=geom(i);if(!opt.overlays||!m||m.idx!==st.idx||!g||performance.now()>m.expires)return;
+ const xy=imagePoint(g,m.point),p=toScreen(st,...xy);ctx.strokeStyle='#63c5e7';ctx.lineWidth=1.5*dpr;ctx.beginPath();
+ for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){ctx.moveTo(p[0]+dx*4*dpr,p[1]+dy*4*dpr);ctx.lineTo(p[0]+dx*12*dpr,p[1]+dy*12*dpr);}ctx.stroke();
+}
+function viewScale(i){const s=P.series[i],st=S[i],dpr=window.devicePixelRatio||1,asp=s.spacing[0]/s.spacing[1];return Math.min(st.cv.clientWidth*dpr/s.cols,st.cv.clientHeight*dpr/(s.rows*asp))*.98*st.zoom;}
+function updateView(i,pan=false){const source=geom(i),st=S[i];if(opt.viewLink&&source){const sc=viewScale(i),dpr=window.devicePixelRatio||1,s=P.series[i];
+ const center=patientPoint(source,s.cols/2-st.px*dpr/sc,s.rows/2-st.py*dpr/(sc*s.spacing[0]/s.spacing[1]));
+ for(let j=0;j<N;j++){const g=geom(j),sj=P.series[j],target=S[j];if(j===i||!sj||target.panel.hidden||!compatible(source,g))continue;
+  if(pan&&Math.abs(dot(source.normal,g.normal))<.999)continue;
+  const old=viewScale(j),base=old/target.zoom,desired=sc/source.spacing[1]*g.spacing[1];target.zoom=Math.max(.2,Math.min(20,desired/base));const next=viewScale(j);
+  if(pan){const xy=imagePoint(g,center);target.px=(sj.cols/2-xy[0])*next/dpr;target.py=(sj.rows/2-xy[1])*next*(sj.spacing[0]/sj.spacing[1])/dpr;}
+  else{target.px*=next/old;target.py*=next/old;}
+  draw(j);
+ }}draw(i);}
+function rememberSeries(i){const series=P.series[i],st=S[i],k=catalog.indexOf(series);if(k<0||!st.displayConfig)return;
+ const record={...st.displayConfig(),idx:st.idx,lo:st.lo,hi:st.hi,zoom:st.zoom,px:st.px,py:st.py,ctRestore:st.ctRestore?{...st.ctRestore}:null};displayMemory.set(seriesKey(series),record);
+ if(P.studyKey&&!memoryTimer)memoryTimer=setTimeout(()=>{memoryTimer=null;try{sessionStorage.setItem('dicom-display-'+P.studyKey,JSON.stringify([...displayMemory]));}catch(e){}},250);
+}
+function restoredState(index){const s=catalog[index],r=displayMemory.get(seriesKey(s));if(!r)return null;
+ if(!['idx','lo','hi','zoom','px','py'].every(k=>Number.isFinite(r[k]))||r.hi<=r.lo)return null;
+ return {...r,idx:Math.max(0,Math.min(s.pos.length-1,Math.round(r.idx))),zoom:Math.max(.2,Math.min(20,r.zoom)),enh:!!r.enh&&s.hasEnh,ctLike:!!r.ctLike&&s.modality==='MR'};
+}
+let sidebarSearch=null,sidebarPlane=null,filterQuery='',filterPlane='All';
+function sidebarDocument(){try{return window.parent.document;}catch(e){return null;}}
+function updateActiveSummary(){const doc=sidebarDocument(),node=doc?.getElementById('study-active-series');if(!node)return;const s=P.series[hover],st=S[hover];
+ node.textContent=s?(s.sequence||s.title)+'\n'+s.plane+' · '+(st.idx+1)+' / '+s.pos.length+' images\n'+s.cols+' × '+s.rows+' pixels\nPixel spacing: '+(s.spacingKnown?s.spacing[1].toFixed(2)+' × '+s.spacing[0].toFixed(2)+' mm':'Unavailable')+'\nSlice thickness: '+(Number.isFinite(s.thickness)?s.thickness.toFixed(2)+' mm':'Unavailable'):'No series in the active viewport.';
+}
+function filterSeries(){const doc=sidebarDocument(),search=doc?.getElementById('study-series-search'),plane=doc?.getElementById('study-plane-filter');if(!search||!plane)return;
+ filterQuery=search.value;filterPlane=plane.value;const query=search.value.trim().toLowerCase();let count=0;rail.querySelectorAll('.series-card').forEach((card,i)=>{const s=catalog[i],show=(!query||(s.title+' '+s.sequence).toLowerCase().includes(query))&&(plane.value==='All'||s.plane===plane.value);card.hidden=!show;if(show)count++;});
+ const status=doc.getElementById('study-filter-count');if(status)status.textContent=count+' of '+catalog.length+' loaded series shown';
+}
+function connectStudySidebar(){const doc=sidebarDocument(),search=doc?.getElementById('study-series-search'),plane=doc?.getElementById('study-plane-filter');if(!search||!plane)return false;sidebarSearch=search;sidebarPlane=plane;search.value=filterQuery;plane.value=filterPlane;search.oninput=filterSeries;plane.onchange=filterSeries;filterSeries();updateActiveSummary();return true;}
 
 // Display-space processing only. No segmentation, synthesis, or changes to source pixels.
 function ctDisplay(gray,w,h,amount){
@@ -687,9 +729,10 @@ async function draw(i){
       else{ctx.fillRect(x1-3*dpr,y1-3*dpr,6*dpr,6*dpr);ctx.fillRect(x2-3*dpr,y2-3*dpr,6*dpr,6*dpr);ctx.fillText(mm(s,m).toFixed(2)+' mm',x2+8*dpr,y2+12*dpr);}
     }
   }
-  drawReferences(i,ctx,dpr);
+  drawReferences(i,ctx,dpr);drawPointMarker(i,ctx,dpr);
   ctx.shadowBlur=0;
-  if(i===hover)refreshOverlays();
+  if(i===hover){refreshOverlays();updateActiveSummary();}
+  if(i===hover||!P.series.some((other,j)=>j!==i&&other===s&&!S[j].panel.hidden))rememberSeries(i);
   st.stat.textContent='Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+(geom(i)?' · Loc: '+s.pos[st.idx].toFixed(1)+'mm':' · Position unavailable')+' · W: '+Math.round(st.hi-st.lo)+' L: '+Math.round((st.hi+st.lo)/2)+
     ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(st.ctLike?' [CT-like display · MRI source · experimental]':s.hasEnh?(useEnh?' [ENHANCED]':' [ORIGINAL]'):'');
 }
@@ -712,7 +755,7 @@ function setIdx(i,v,fromSync){
   drawAll();
 }
 
-function resetView(i){const s=P.series[i],st=S[i];if(!s)return;st.zoom=1;st.px=st.py=0;st.lo=s.wl.auto[0];st.hi=s.wl.auto[1];draw(i);}
+function resetView(i){const s=P.series[i],st=S[i];if(!s)return;st.zoom=1;st.px=st.py=0;st.lo=s.wl.auto[0];st.hi=s.wl.auto[1];updateView(i,true);}
 function preset(i,name){const s=P.series[i],st=S[i],w=s.wl[name]||s.wl.auto;st.lo=w[0];st.hi=w[1];draw(i);}
 
 function angleDegrees(s,m){
@@ -769,6 +812,7 @@ syncG.append($('div',{className:'tool-label',textContent:'LINK'}));
 syncG.append(chk('Position linked','sync',true));
 syncG.append(chk('Reference lines','refs',true));
 syncG.append(chk('W/L Linked','link',false));
+syncG.append(chk('Zoom / pan linked','viewLink',false));
 bar.append(syncG);
 
 const icons={
@@ -858,14 +902,14 @@ const clr=$('button',{textContent:'Clear all overlays'});clr.onclick=()=>{S.forE
 if(P.patient){bar.append($('div',{className:'pat-banner',textContent:P.patient}));}
 
 function chk(label,key,init){
-  const c=$('input',{type:'checkbox',checked:init,ariaLabel:label});
+  const c=$('input',{type:'checkbox',checked:init,ariaLabel:label});if(key==='viewLink')c.title='Physical zoom links compatible views; pan links compatible parallel views.';
   c.onchange=()=>{opt[key]=c.checked;if(key==='overlays'||key==='refs')drawAll();};
   return $('label',null,[c,document.createTextNode(label)]);
 }
 
 const grid=document.getElementById('grid');
 const rail=document.getElementById('series-rail');
-function activate(i){const changed=hover!==i;hover=i;refreshOverlays();if(changed)drawAll();document.querySelectorAll('.panel').forEach((p,j)=>p.classList.toggle('active-viewport',j===i));rail.querySelectorAll('.series-card').forEach((p,j)=>p.classList.toggle('active',catalog[j]===P.series[i]));}
+function activate(i){const changed=hover!==i;hover=i;refreshOverlays();updateActiveSummary();if(changed)drawAll();document.querySelectorAll('.panel').forEach((p,j)=>p.classList.toggle('active-viewport',j===i));rail.querySelectorAll('.series-card').forEach((p,j)=>p.classList.toggle('active',catalog[j]===P.series[i]));}
 async function thumbnail(i,cv){const s=P.series[i],data=await getFrame(i,Math.floor(s.pos.length/2),false);cv.width=s.cols;cv.height=s.rows;const ctx=cv.getContext('2d'),im=ctx.createImageData(s.cols,s.rows),[lo,hi]=s.wl.auto;for(let k=0;k<data.length;k++){let v=Math.max(0,Math.min(255,255*(val(s,data[k])-lo)/Math.max(1e-9,hi-lo)));if(s.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);}
 P.series.forEach((item,i)=>{
   let s=item||catalog[0];
@@ -904,17 +948,21 @@ P.series.forEach((item,i)=>{
   pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,bRst,bPlay,settings]),cv,stat);
   grid.append(pnl);
   const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
-  st.clear=()=>{leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);};
+  st.clear=()=>{rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover)updateActiveSummary();};
   st.displayConfig=()=>({wl:sel.value,inv:st.inv,enh:st.enh,ctLike:st.ctLike,ctContrast:st.ctContrast,ctSharp:st.ctSharp});
   st.applyDisplay=c=>{sel.value=['auto','dicom','full'].includes(c.wl)&&s.wl[c.wl]?c.wl:'auto';preset(i,sel.value);st.inv=!!c.inv;st.enh=!!c.enh&&s.hasEnh;bInv.className=st.inv?'on':'';bEnh.className=st.enh?'on':'';if(c.ctLike&&s.modality==='MR'){st.ctContrast=Math.max(.7,Math.min(1.8,Number(c.ctContrast)||1.25));st.ctSharp=Math.max(0,Math.min(.5,Number(c.ctSharp)||0));settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;bCT.onclick();}draw(i);};
+  st.syncDisplayUI=()=>{sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;bOriginal.hidden=!st.ctLike;settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
   st.assign=(index)=>{
-    leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
+    if(P.series[i]===catalog[index]){activate(i);return;}
+    rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
     st.tok++;s=catalog[index];P.series[i]=s;
-    Object.assign(st,{idx:Math.floor(s.pos.length/2),lo:s.wl.auto[0],hi:s.wl.auto[1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null});
+    Object.assign(st,{idx:Math.floor(s.pos.length/2),lo:s.wl.auto[0],hi:s.wl.auto[1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null,matchPoint:null,ctLike:false,ctRestore:null});
+    const restored=restoredState(index);if(restored)Object.assign(st,restored);
     pnl.querySelector('.ttl').textContent=s.title+(s.hasEnh?' · SNR:'+s.snr:'');
     sel.replaceChildren();['auto','dicom','full'].forEach(n=>{if(n!=='dicom'||s.wl.dicom)sel.append($('option',{value:n,textContent:'W/L '+n}));});
-    bCT.disabled=s.modality!=='MR';bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;activate(i);draw(i);
+    bCT.disabled=s.modality!=='MR';bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;if(restored)st.syncDisplayUI();activate(i);draw(i);
   };
+  const initialIndex=catalog.indexOf(item),initial=initialIndex>=0?restoredState(initialIndex):null;if(initial){Object.assign(st,initial);st.syncDisplayUI();}
   pnl.ondragover=e=>{if(e.dataTransfer.types.includes('application/x-dicom-series')){e.preventDefault();e.dataTransfer.dropEffect='copy';pnl.classList.add('drop-target');}};
   pnl.ondragleave=()=>pnl.classList.remove('drop-target');
   pnl.ondrop=e=>{e.preventDefault();pnl.classList.remove('drop-target');const raw=e.dataTransfer.getData('application/x-dicom-series');if(!raw)return;const index=Number(raw);if(Number.isInteger(index)&&index>=0&&index<catalog.length)st.assign(index);};
@@ -925,7 +973,7 @@ P.series.forEach((item,i)=>{
   });
   cv.addEventListener('wheel',e=>{
     e.preventDefault();if(!P.series[i])return;
-    if(e.ctrlKey||e.metaKey){st.zoom=Math.max(0.2,Math.min(20,st.zoom*Math.exp(-e.deltaY*0.01)));draw(i);}
+    if(e.ctrlKey||e.metaKey){st.zoom=Math.max(0.2,Math.min(20,st.zoom*Math.exp(-e.deltaY*0.01)));updateView(i);}
     else setIdx(i,st.idx+(e.deltaY>0?1:-1));
   },{passive:false});
   
@@ -960,8 +1008,8 @@ P.series.forEach((item,i)=>{
       const targets=opt.link?[...Array(N).keys()].filter(j=>P.series[j]&&!S[j].panel.hidden):[i];
       targets.forEach(j=>{const sj=P.series[j],stj=S[j],r0=Math.max(1e-9,sj.wl.auto[1]-sj.wl.auto[0])/300;
         let c=(stj.hi+stj.lo)/2,w=stj.hi-stj.lo;w=Math.max(r0*2,w+dx*r0);c-=dy*r0;stj.lo=c-w/2;stj.hi=c+w/2;draw(j);});
-    }else if(drag.tool==='zoom'){st.zoom=Math.max(.2,Math.min(20,st.zoom*Math.exp(-dy*.015)));draw(i);}
-    else if(drag.tool==='pan'){st.px+=dx;st.py+=dy;draw(i);}
+    }else if(drag.tool==='zoom'){st.zoom=Math.max(.2,Math.min(20,st.zoom*Math.exp(-dy*.015)));updateView(i);}
+    else if(drag.tool==='pan'){st.px+=dx;st.py+=dy;updateView(i,true);}
     else if(drag.m){const rc=cv.getBoundingClientRect(),[x,y]=toImage(st,e.clientX-rc.left,e.clientY-rc.top);drag.m.x2=Math.max(0,Math.min(s.cols-1,x));drag.m.y2=Math.max(0,Math.min(s.rows-1,y));draw(i);}
   });
   const end=()=>{if(drag&&drag.m&&['roi','ellipse'].includes(drag.m.type))roiStats(i,drag.m,drag.idx);drag=null;};
@@ -978,6 +1026,10 @@ catalog.forEach((s,index)=>{
  (async()=>{const data=await inflate(s.items[Math.floor(s.pos.length/2)].o);thumb.width=s.cols;thumb.height=s.rows;const ctx=thumb.getContext('2d'),im=ctx.createImageData(s.cols,s.rows),[lo,hi]=s.wl.auto;for(let k=0;k<data.length;k++){let v=Math.max(0,Math.min(255,255*(val(s,data[k])-lo)/Math.max(1e-9,hi-lo)));if(s.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);})();
 });
 setLayout(2,2);
+let sidebarAttempts=0;function attachSidebar(){if(!connectStudySidebar()&&sidebarAttempts++<40)setTimeout(attachSidebar,100);}attachSidebar();
+const sidebarReconnect=setInterval(()=>{const doc=sidebarDocument();if(doc?.getElementById('study-series-search')!==sidebarSearch||doc?.getElementById('study-plane-filter')!==sidebarPlane)connectStudySidebar();},500);
+window.addEventListener('pagehide',()=>clearInterval(sidebarReconnect));
+window.addEventListener('pagehide',()=>{if(P.studyKey)try{sessionStorage.setItem('dicom-display-'+P.studyKey,JSON.stringify([...displayMemory]));}catch(e){}});
 new ResizeObserver(()=>requestAnimationFrame(drawAll)).observe(grid);
 
 window.addEventListener('keydown',e=>{
@@ -1014,10 +1066,10 @@ def build_empty_workspace():
     return theme + tools + '<div class="workspace">' + rail + tool_rail + '<div id="grid">' + cells + '</div></div><div class="workspace-footer"><span>No image data loaded</span><span>Window / level · Measurements · Linked scrolling · Cine</span></div>' + fit_script
 
 
-def build_viewer_html(series_payloads, patient_text=None, panel_height=360):
+def build_viewer_html(series_payloads, patient_text=None, panel_height=360, study_key=None):
     n = len(series_payloads)
     cols = 2 if n >= 2 else 1
-    payload = dict(series=series_payloads, patient=patient_text)
+    payload = dict(series=series_payloads, patient=patient_text, studyKey=study_key)
     data = json.dumps(payload, separators=(",", ":")).replace("</", r"<\/")
     html = (VIEWER_HTML.replace("__PAYLOAD__", data).replace("__COLS__", str(cols)).replace("__PANEL_H__", str(panel_height)))
     rows = -(-n // cols)
@@ -1142,6 +1194,30 @@ def embed_html(html, height):
     return st.components.v1.html(html, height=height, scrolling=False)
 
 
+def build_study_overview(series, loaded=None, selected=None, failed=0):
+    a = series[0]["items"][0] if series else None
+    date = str(getattr(a, "StudyDate", "") or "Unavailable")
+    if len(date) == 8 and date.isdigit(): date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+    modalities = ", ".join(sorted({str(getattr(s["items"][0], "Modality", "") or "Unknown") for s in series}))
+    total = sum(frame_count(s) for s in series)
+    status = "Preparing images…" if loaded is None else f"{loaded} of {len(series)} series loaded"
+    if selected is not None and selected < len(series): status += f" · {len(series)-selected} not selected"
+    if failed: status += f" · {failed} failed"
+    return (
+        '<section style="padding:12px 0;border-bottom:1px solid #26313f;color:#98aabd;font-size:12px">'
+        '<div style="color:#d4deea;font-weight:600;margin-bottom:8px">Study overview</div>'
+        f'<div>{escape(modalities)} · {escape(date)}</div><div>{len(series)} series · {total} images</div>'
+        f'<div style="font-size:11px;margin-top:6px">{escape(status)}</div>'
+        '<div style="color:#d4deea;font-weight:600;margin:12px 0 5px">Active series</div>'
+        '<div id="study-active-series" style="white-space:pre-line;font-size:11px;line-height:1.6">Select a viewport to see its details.</div>'
+        '<label for="study-series-search" style="display:block;margin-top:12px;margin-bottom:4px">Find loaded series</label>'
+        '<input id="study-series-search" aria-label="Find loaded series" type="search" placeholder="Sequence or series name" style="width:100%;padding:7px 8px;color:#d4deea;background:#151f2b;border:1px solid #344357;border-radius:4px">'
+        '<select id="study-plane-filter" aria-label="Filter series by plane" style="width:100%;margin-top:6px;padding:6px 8px;color:#d4deea;background:#151f2b;border:1px solid #344357;border-radius:4px">'
+        '<option value="All">All planes</option><option>Axial</option><option>Sagittal</option><option>Coronal</option></select>'
+        '<div id="study-filter-count" style="font-size:10px;margin-top:5px">Search filters thumbnails without reloading.</div></section>'
+    )
+
+
 def main():
     st.set_page_config(page_title="SD-DCM | Clinical Workstation", page_icon="◉", layout="wide")
     st.markdown(CSS, unsafe_allow_html=True)
@@ -1158,6 +1234,7 @@ def main():
     up = sb.file_uploader("Open DICOM study", type=["zip"],
                           help="Upload a ZIP archive containing DICOM images.")
     sb.caption("Files are processed by the Streamlit server hosting this app.")
+    overview_slot = sb.empty()
     sb.divider()
     sb.caption("PROCESSING")
     enhance = sb.toggle("Enable enhancement", value=True,
@@ -1235,6 +1312,7 @@ def main():
         selected_study = sb.selectbox("Study", range(len(keys)),
             format_func=lambda i: f"Study {i + 1} · {len(study_groups[keys[i]])} series")
         series = study_groups[keys[selected_study]]
+    overview_slot.markdown(build_study_overview(series), unsafe_allow_html=True)
     labels = {item["label"] + f" [{item['uid'][-6:]}]": item for item in series}
     chosen = list(labels)
     if sum(payload_estimate(s, bool(enhance) and not cine_series(s)) for s in series) > 64*1024*1024:
@@ -1242,6 +1320,7 @@ def main():
         chosen = sb.multiselect("Series to load", list(labels), default=list(labels)[:1], key="series_selection_"+fhash)
         st.info("Large-study mode: only selected series are loaded. Select more or different series in the sidebar.")
     if not chosen:
+        overview_slot.markdown(build_study_overview(series, loaded=0, selected=0), unsafe_allow_html=True)
         loading.empty()
         return
     sb.caption(f"{len(chosen)} series · All listed beside the image workspace")
@@ -1252,6 +1331,7 @@ def main():
     
     planned = sum(payload_estimate(labels[name], bool(enhance) and not (cine_series(labels[name]) or payload_estimate(labels[name], bool(enhance)) > 24*1024*1024)) for name in chosen)
     if planned > 64*1024*1024:
+        overview_slot.markdown(build_study_overview(series, loaded=0, selected=len(chosen)), unsafe_allow_html=True)
         loading.empty()
         st.error("Selected series exceed the current viewer transport budget. Select fewer series; no partial series will be displayed.")
         return
@@ -1270,6 +1350,7 @@ def main():
             
     loading.empty()
     
+    overview_slot.markdown(build_study_overview(series, loaded=len(payloads), selected=len(chosen), failed=len(chosen)-len(payloads)), unsafe_allow_html=True)
     if not payloads:
         return
         
@@ -1288,7 +1369,7 @@ def main():
         
     # Embed Diagnostic Matrix
     logging.getLogger("dicom_viewer").warning("DICOM workspace ready: series=%s frames=%s", len(payloads), sum(len(p["items"]) for p in payloads))
-    html, height = build_viewer_html(payloads, patient)
+    html, height = build_viewer_html(payloads, patient, study_key=fhash)
     embed_html(html, height=height)
 
 # ----------------------------------------------------------------------------------------------------------------
