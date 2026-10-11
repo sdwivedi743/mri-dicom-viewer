@@ -385,7 +385,7 @@ def build_payload_series(s, enhance, params, progress=None):
     slope = _first(getattr(a, "RescaleSlope", None), 1.0) or 1.0
     icpt = _first(getattr(a, "RescaleIntercept", None), 0.0) or 0.0
     dicom_wl = [wc - ww / 2, wc + ww / 2] if (wc is not None and ww) else None
-    return dict(title=s["label"], plane=plane_name(s["normal"]), rows=s["rows"], cols=s["cols"],
+    return dict(title=s["label"], modality=str(getattr(a, "Modality", "")).upper(), plane=plane_name(s["normal"]), rows=s["rows"], cols=s["cols"],
                 spacing=[float(sp[0]), float(sp[1])],
                 invert=str(getattr(a, "PhotometricInterpretation", "")).upper() == "MONOCHROME1",
                 pos=pos, hasEnh=bool(enh), snr=round(info["snr"], 1), sigma=info["sigma"],
@@ -469,7 +469,7 @@ const catalog=P.series;
 P.series=Array.from({length:16},(_,i)=>i<Math.min(4,catalog.length)?catalog[i]:null);
 const PH=__PANEL_H__, N=16;
 let layoutRows=2,layoutCols=2;
-const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),lo:s.wl.auto[0],hi:s.wl.auto[1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null});});
+const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),lo:s.wl.auto[0],hi:s.wl.auto[1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null,ctLike:false,ctContrast:1.25,ctSharp:.25,ctRestore:null});});
 const opt={sync:true,link:false,tool:'wl',overlays:true};
 let hover=0;
 
@@ -495,14 +495,31 @@ function toScreen(st,x,y){const L=st.lay;return [L.ox+(x-L.w/2)*L.sc,L.oy+(y-L.h
 function toImage(st,ex,ey){const L=st.lay;return [((ex*L.dpr)-L.ox)/L.sc+L.w/2,(((ey*L.dpr)-L.oy)/(L.sc*L.asp))+L.h/2];}
 function mm(s,m){const dx=(m.x2-m.x1)*s.spacing[1],dy=(m.y2-m.y1)*s.spacing[0];return Math.hypot(dx,dy);}
 
+// Display-space processing only. No segmentation, synthesis, or changes to source pixels.
+function ctDisplay(gray,w,h,amount){
+ const out=new Float32Array(gray);
+ for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){
+  const k=y*w+x;let sum=0,mn=255,mx=0;
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const v=gray[k+dy*w+dx];sum+=v;mn=Math.min(mn,v);mx=Math.max(mx,v);}
+  const detail=gray[k]-sum/9,gate=Math.min(1,Math.max(0,(Math.abs(detail)-3)/9));
+  const boost=Math.max(-8,Math.min(8,amount*detail*gate));out[k]=Math.max(mn,Math.min(mx,gray[k]+boost));
+ }
+ return out;
+}
 async function draw(i){
   const s=P.series[i],st=S[i];if(!s||st.panel.hidden)return;const tok=++st.tok;
-  const useEnh=st.enh&&s.hasEnh,data=await getFrame(i,st.idx,useEnh);
+  const useEnh=!st.ctLike&&st.enh&&s.hasEnh,data=await getFrame(i,st.idx,useEnh);
   if(tok!==st.tok)return;
   const w=s.cols,h=s.rows,oc=st.oc||(st.oc=$('canvas'));oc.width=w;oc.height=h;
   const octx=oc.getContext('2d'),img=octx.createImageData(w,h),px=img.data;
   const rng=Math.max(1e-9,st.hi-st.lo),a=255*s.scale/rng,b=255*(s.off-st.lo)/rng,inv=st.inv;
   for(let k=0,j=0;k<data.length;k++,j+=4){let g=a*data[k]+b;g=g<0?0:g>255?255:g;if(inv)g=255-g;px[j]=px[j+1]=px[j+2]=g;px[j+3]=255;}
+  if(st.ctLike){
+    const gray=new Float32Array(w*h);
+    for(let k=0;k<gray.length;k++){const normal=Math.max(0,Math.min(1,(val(s,data[k])-st.lo)/rng));gray[k]=255*Math.pow(1-normal,st.ctContrast);}
+    const display=ctDisplay(gray,w,h,st.ctSharp);
+    for(let k=0;k<display.length;k++){const j=k*4;px[j]=px[j+1]=px[j+2]=display[k];}
+  }
   octx.putImageData(img,0,0);
   const cv=st.cv,ctx=cv.getContext('2d'),dpr=window.devicePixelRatio||1,cw=cv.clientWidth,ch=cv.clientHeight;
   if(cv.width!==Math.round(cw*dpr)||cv.height!==Math.round(ch*dpr)){cv.width=Math.round(cw*dpr);cv.height=Math.round(ch*dpr);}
@@ -533,7 +550,7 @@ async function draw(i){
   ctx.shadowBlur=0;
   if(i===hover)refreshOverlays();
   st.stat.textContent='Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+' · Loc: '+s.pos[st.idx].toFixed(1)+'mm · W: '+Math.round(st.hi-st.lo)+' L: '+Math.round((st.hi+st.lo)/2)+
-    ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(s.hasEnh?(useEnh?' [ENHANCED]':' [ORIGINAL]'):'');
+    ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(st.ctLike?' [CT-like display · MRI source · experimental]':s.hasEnh?(useEnh?' [ENHANCED]':' [ORIGINAL]'):'');
 }
 
 const drawAll=()=>{for(let i=0;i<N;i++)draw(i);};
@@ -670,25 +687,36 @@ P.series.forEach((item,i)=>{
   
   const bEnh=$('button',{textContent:'Enhance'}),bInv=$('button',{textContent:'Invert'}),bRst=$('button',{textContent:'Reset'}),bPlay=$('button',{textContent:'▶ Cine'});
   bEnh.className=st.enh?'on':'';bEnh.style.display=s.hasEnh?'':'none';
-  bEnh.onclick=()=>{st.enh=!st.enh;bEnh.className=st.enh?'on':'';draw(i);};
-  bInv.onclick=()=>{st.inv=!st.inv;bInv.className=st.inv?'on':'';draw(i);};bInv.className=st.inv?'on':'';
+  bEnh.onclick=()=>{leaveCT();st.enh=!st.enh;bEnh.className=st.enh?'on':'';draw(i);};
+  bInv.onclick=()=>{leaveCT();st.inv=!st.inv;bInv.className=st.inv?'on':'';draw(i);};bInv.className=st.inv?'on':'';
   bRst.onclick=()=>resetView(i);
   bPlay.onclick=()=>{
     if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
     else{bPlay.className='on';st.play=setInterval(()=>setIdx(i,(st.idx+1)%s.pos.length),120);}
   };
   
+  const bCT=$('button',{textContent:'CT-like',title:'Experimental MRI display: inverted contrast and bounded sharpening. Also emphasizes other low-signal tissues.'});
+  const bOriginal=$('button',{textContent:'Original',hidden:true});
+  const settings=$('details',{hidden:true}),summary=$('summary',{textContent:'CT-like settings'});settings.append(summary);
+  function leaveCT(){if(!st.ctLike)return;Object.assign(st,st.ctRestore);st.ctLike=false;st.ctRestore=null;bCT.className='';settings.hidden=true;bOriginal.hidden=true;bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';}
+  bCT.disabled=s.modality!=='MR';bCT.onclick=()=>{
+    if(st.ctLike){leaveCT();draw(i);return;}
+    st.ctRestore={lo:st.lo,hi:st.hi,inv:st.inv,enh:st.enh};st.lo=s.wl.auto[0];st.hi=s.wl.auto[1];st.ctLike=true;bCT.className='on';settings.hidden=false;bOriginal.hidden=false;draw(i);
+  };
+  bOriginal.onclick=()=>{leaveCT();st.enh=false;st.inv=!!s.invert;bEnh.className='';bInv.className=st.inv?'on':'';draw(i);};
+  [['Contrast','ctContrast',.7,1.8,.05],['Edge emphasis','ctSharp',0,.5,.05]].forEach(([label,key,min,max,step])=>{const slider=$('input',{type:'range',min,max,step,value:st[key],ariaLabel:label});slider.oninput=()=>{st[key]=Number(slider.value);draw(i);};settings.append($('label',null,[document.createTextNode(label),slider]));});
+  settings.style.cssText='font-size:10px;color:#91bdd4';
   st.togEnh=()=>bEnh.onclick();st.togInv=()=>bInv.onclick();st.togPlay=()=>bPlay.onclick();
-  pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bRst,bPlay]),cv,stat);
+  pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,bRst,bPlay,settings]),cv,stat);
   grid.append(pnl);
   const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
   st.assign=(index)=>{
-    cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
+    leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
     st.tok++;s=catalog[index];P.series[i]=s;
     Object.assign(st,{idx:Math.floor(s.pos.length/2),lo:s.wl.auto[0],hi:s.wl.auto[1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null});
     pnl.querySelector('.ttl').textContent=s.title+(s.hasEnh?' · SNR:'+s.snr:'');
     sel.replaceChildren();['auto','dicom','full'].forEach(n=>{if(n!=='dicom'||s.wl.dicom)sel.append($('option',{value:n,textContent:'W/L '+n}));});
-    bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;activate(i);draw(i);
+    bCT.disabled=s.modality!=='MR';bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;activate(i);draw(i);
   };
   pnl.ondragover=e=>{if(e.dataTransfer.types.includes('application/x-dicom-series')){e.preventDefault();e.dataTransfer.dropEffect='copy';pnl.classList.add('drop-target');}};
   pnl.ondragleave=()=>pnl.classList.remove('drop-target');
