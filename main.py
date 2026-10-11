@@ -622,6 +622,19 @@ function locatePoint(i,x,y){const source=geom(i);if(!source){readingNotice.textC
  readingNotice.textContent=count?'Located point in '+count+' compatible viewport(s).':'No compatible slice covers this point.';drawAll();
 }
 
+function nearestOtherPlanes(i,source,point){
+ let count=0;
+ for(let j=0;j<N;j++){
+  const series=P.series[j];if(j===i||!series||S[j].panel.hidden)continue;
+  // Match only other planes. The source and parallel series stay at their current images.
+  const candidates={...series,geometry:(series.geometry||[]).map(g=>g&&Math.abs(dot(source.normal,g.normal))<.999?g:null)};
+  const k=nearestSlice(candidates,source,point,false);
+  if(k>=0){cancelAngle(j);S[j].idx=k;count++;}
+ }
+ showNearestStatus(count?'Nearest images shown in '+count+' other-plane viewport(s).':'No compatible slice in another open plane covers this point.');
+ drawAll();return count;
+}
+
 // Display-space processing only. No segmentation, synthesis, or changes to source pixels.
 function ctDisplay(gray,w,h,amount){
  const out=new Float32Array(gray);
@@ -724,7 +737,33 @@ async function roiStats(i,m,idx){
  m.txt='Original pixels\nMean: '+mean.toFixed(2)+' · SD: '+sd.toFixed(2)+'\nMedian: '+median.toFixed(2)+'\nMode (64 bins): '+mode.toFixed(2)+'\nMin/Max: '+mn.toFixed(2)+' / '+mx.toFixed(2)+'\nArea: '+(n*s.spacing[0]*s.spacing[1]).toFixed(2)+' mm²';draw(i);
 }
 
+const nearestMenu=$('div',{id:'nearest-image-menu',hidden:true,role:'menu',ariaLabel:'Image actions'});
+nearestMenu.style.cssText='position:fixed;z-index:2000;padding:5px;background:#15212e;border:1px solid #435970;border-radius:5px;box-shadow:0 8px 24px #0009;max-width:calc(100vw - 16px)';
+const nearestAction=$('button',{textContent:'Nearest image in other planes',role:'menuitem'});
+nearestAction.style.cssText='display:block;width:100%;text-align:left';
+const nearestHelp=$('div');nearestHelp.style.cssText='max-width:260px;padding:5px 8px;color:#7296ac;font-size:10px';
+nearestMenu.append(nearestAction,nearestHelp);document.body.append(nearestMenu);
+const nearestStatus=$('span',{id:'nearest-image-status',hidden:true,role:'status'});nearestStatus.style.cssText='position:fixed;bottom:34px;right:12px;z-index:1900;max-width:360px;padding:8px 10px;background:#15212e;border:1px solid #435970;border-radius:4px;color:#91bdd4;font-size:10px;pointer-events:none';
+let nearestNoticeTimer;function showNearestStatus(text){nearestStatus.textContent=text;nearestStatus.hidden=false;clearTimeout(nearestNoticeTimer);nearestNoticeTimer=setTimeout(()=>nearestStatus.hidden=true,6000);}
+function closeNearestMenu(){nearestMenu.hidden=true;}
+document.addEventListener('pointerdown',e=>{if(!nearestMenu.contains(e.target))closeNearestMenu();});
+window.addEventListener('resize',closeNearestMenu);
+window.addEventListener('keydown',e=>{if(e.key==='Escape')closeNearestMenu();});
+function openNearestMenu(i,e){
+ e.preventDefault();const series=P.series[i],st=S[i];if(!series||!st.lay)return;
+ activate(i);const rc=st.cv.getBoundingClientRect();
+ const [x,y]=toImage(st,e.clientX-rc.left,e.clientY-rc.top),source=geom(i);
+ const inside=x>=0&&y>=0&&x<series.cols&&y<series.rows;
+ nearestAction.disabled=!inside||!source;
+ nearestHelp.textContent=!inside?'Right-click directly on the anatomy.':!source?'Unavailable: supported DICOM geometry is missing.':'Uses the clicked point and compatible DICOM geometry.';
+ const point=inside&&source?patientPoint(source,x,y):null;
+ nearestAction.onclick=()=>{closeNearestMenu();if(!point)return;if(P.series[i]!==series){showNearestStatus('Series changed. Right-click the image again.');return;}nearestOtherPlanes(i,source,point);st.cv.focus();};
+ nearestMenu.hidden=false;nearestMenu.style.left=Math.max(8,Math.min(e.clientX,window.innerWidth-nearestMenu.offsetWidth-8))+'px';nearestMenu.style.top=Math.max(8,Math.min(e.clientY,window.innerHeight-nearestMenu.offsetHeight-8))+'px';
+ nearestAction.focus();
+}
+
 const bar=document.getElementById('bar');
+bar.append(nearestStatus);
 const syncG=$('div',{className:'tool-group'});
 syncG.append($('div',{className:'tool-label',textContent:'LINK'}));
 syncG.append(chk('Position linked','sync',true));
@@ -890,10 +929,10 @@ P.series.forEach((item,i)=>{
     else setIdx(i,st.idx+(e.deltaY>0?1:-1));
   },{passive:false});
   
-  cv.addEventListener('contextmenu',e=>e.preventDefault());
+  cv.tabIndex=0;cv.addEventListener('contextmenu',e=>openNearestMenu(i,e));
   let drag=null;
   cv.addEventListener('pointerdown',e=>{
-    if(!P.series[i])return;activate(i);cv.setPointerCapture(e.pointerId);
+    if(e.button===2||!P.series[i])return;activate(i);cv.setPointerCapture(e.pointerId);
     const tool=e.button===1?'pan':(e.shiftKey?'dist':opt.tool);
     drag={tool,x:e.clientX,y:e.clientY};
     if(!st.lay){drag=null;return;}
