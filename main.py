@@ -2,7 +2,6 @@ import base64
 import io
 import json
 import math
-import struct
 import zipfile
 from dataclasses import dataclass, field
 
@@ -11,65 +10,12 @@ import pydicom
 import scipy.ndimage as ndimage
 import streamlit as st
 import streamlit.components.v1 as components
-from PIL import Image
+from pydicom.errors import InvalidDicomError
 
-st.set_page_config(
-    page_title="MRI Workstation",
-    page_icon="🧠",
-    layout="wide",
-)
-
-st.html("""
-<style>
-    .stApp {
-        background: linear-gradient(135deg, #060913 0%, #0b1121 100%);
-        color: #f1f5f9;
-    }
-    .stSidebar {
-        background: rgba(15, 23, 42, 0.55);
-        border-right: 1px solid rgba(255, 255, 255, 0.08);
-    }
-    .viewport-grid {
-        display: grid;
-        gap: 16px;
-    }
-    .viewport-panel {
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 10px;
-    }
-    .viewport-title {
-        color: #38bdf8;
-        font-weight: 600;
-        font-size: 0.85rem;
-        margin-bottom: 6px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-    .viewport-status {
-        color: #94a3b8;
-        font-size: 0.72rem;
-        font-family: ui-monospace, monospace;
-        margin-top: 6px;
-    }
-    canvas {
-        width: 100%;
-        height: auto;
-        background: #000;
-        border-radius: 8px;
-        cursor: crosshair;
-        display: block;
-    }
-</style>
-""")
+st.set_page_config(page_title="MRI Workstation", page_icon="🧠", layout="wide")
 
 st.title("🧠 MRI Diagnostics Workstation")
-st.write(
-    "Upload a ZIP archive containing DICOM MRI series. "
-    "Images are windowed from the original rescaled pixel values; no diagnostic measurement should be used without validation."
-)
+st.write("Upload a ZIP archive containing DICOM MRI images.")
 
 MAX_SERIES = 6
 MAX_SLICES_PER_SERIES = 250
@@ -92,34 +38,7 @@ class Series:
     column_spacing: float = 1.0
 
 
-def apply_ai_corrections(pixels: np.ndarray) -> np.ndarray:
-    """
-    Classical enhancement, not AI: bias-field correction, ringing suppression,
-    and conservative Laplacian sharpening.
-    """
-    img = np.asarray(pixels, dtype=np.float32)
-
-    finite = np.isfinite(img)
-    if not finite.all():
-        img = np.nan_to_num(img, nan=0.0, posinf=0.0, neginf=0.0)
-
-    min_value = float(np.min(img))
-    shifted = img - min_value + 1.0
-
-    log_img = np.log(shifted)
-    sigma = max(1.0, max(img.shape) / 6.0)
-    low_frequency = ndimage.gaussian_filter(log_img, sigma=sigma)
-    bias_corrected = np.exp(log_img - low_frequency)
-
-    smooth = ndimage.gaussian_filter(bias_corrected, sigma=1.2)
-    high_frequency = bias_corrected - smooth
-    suppressed = bias_corrected - 0.35 * high_frequency
-
-    sharpened = suppressed - 0.20 * ndimage.laplace(suppressed)
-    return np.clip(sharpened, 0.0, None).astype(np.float32)
-
-
-def _safe_float(value, default: float) -> float:
+def safe_float(value, default: float) -> float:
     try:
         result = float(value)
         return result if math.isfinite(result) else default
@@ -127,161 +46,273 @@ def _safe_float(value, default: float) -> float:
         return default
 
 
-def _get_window_values(dcm, pixels: np.ndarray) -> tuple[float, float]:
+def get_window_values(dcm, pixels: np.ndarray) -> tuple[float, float]:
     default_center = float(np.median(pixels))
-    default_width = max(1.0, float(np.percentile(pixels, 99) - np.percentile(pixels, 1)))
+    default_width = max(
+        1.0,
+        float(np.percentile(pixels, 99) - np.percentile(pixels, 1)),
+    )
 
-    try:
-        center = dcm.WindowCenter
-        width = dcm.WindowWidth
-    except AttributeError:
-        return default_center, default_width
+    center = getattr(dcm, "WindowCenter", default_center)
+    width = getattr(dcm, "WindowWidth", default_width)
 
     if isinstance(center, (list, tuple, pydicom.multival.MultiValue)):
         center = center[0] if len(center) else default_center
     if isinstance(width, (list, tuple, pydicom.multival.MultiValue)):
         width = width[0] if len(width) else default_width
 
-    center = _safe_float(center, default_center)
-    width = _safe_float(width, default_width)
+    center = safe_float(center, default_center)
+    width = safe_float(width, default_width)
     return center, max(1.0, width)
 
 
-def _slice_sort_key(slice_item: Slice) -> tuple:
-    if slice_item.position is not None:
-        return (0, slice_item.position[2], slice_item.position[1], slice_item.position[0])
-    return (1, slice_item.instance_number, 0.0, 0.0)
+def read_pixel_array(dcm) -> np.ndarray:
+    """
+    Read pixel data, decompressing supported compressed transfer syntaxes.
+    """
+    transfer_syntax = getattr(
+        getattr(dcm, "file_meta", None),
+        "TransferSyntaxUID",
+        None,
+    )
+
+    compressed_prefixes = (
+        "1.2.840.10008.1.2.4.5",   # JPEG lossy
+        "1.2.840.10008.1.2.4.50",  # JPEG lossy
+        "1.2.840.10008.1.2.4.51",  # JPEG extended
+        "1.2.840.10008.1.2.4.57",  # JPEG lossless
+        "1.2.840.10008.1.2.4.70",  # JPEG lossless
+        "1.2.840.10008.1.2.4.80",  # JPEG-LS
+        "1.2.840.10008.1.2.4.90",  # JPEG 2000
+        "1.2.840.10008.1.2.4.91",  # JPEG 2000
+    )
+
+    if transfer_syntax is not None and str(transfer_syntax).startswith(compressed_prefixes):
+        try:
+            dcm.decompress()
+        except Exception as exc:
+            raise RuntimeError(
+                f"Compressed pixel data could not be decoded "
+                f"(transfer syntax {transfer_syntax}). Install an applicable "
+                f"pydicom image handler: {exc}"
+            ) from exc
+
+    return dcm.pixel_array
 
 
-@st.cache_data(show_spinner="Parsing DICOM series...")
-def parse_dicom_zip(file_bytes: bytes) -> tuple[dict[str, Series], list[str], dict[str, str]]:
-    """
-    Parse a ZIP into series. Returns series, warnings, and patient metadata.
-    Caching prevents repeated ZIP extraction and DICOM parsing on every rerun.
-    """
-    series: dict[str, Series] = {}
+def normalize_pixels(dcm) -> np.ndarray:
+    pixels = read_pixel_array(dcm).astype(np.float32)
+
+    slope = safe_float(getattr(dcm, "RescaleSlope", 1.0), 1.0)
+    intercept = safe_float(getattr(dcm, "RescaleIntercept", 0.0), 0.0)
+    pixels = pixels * slope + intercept
+
+    if not np.isfinite(pixels).all():
+        pixels = np.nan_to_num(pixels, nan=0.0, posinf=0.0, neginf=0.0)
+
+    return pixels
+
+
+def slice_sort_key(item: Slice) -> tuple:
+    if item.position is not None:
+        return (0, item.position[2], item.position[1], item.position[0])
+    return (1, item.instance_number, 0.0, 0.0)
+
+
+def add_slice(
+    series_dict: dict[str, Series],
+    dcm,
+    pixels: np.ndarray,
+    warnings: list[str],
+    filename: str,
+) -> None:
+    series_name = str(
+        getattr(dcm, "SeriesDescription", "")
+        or getattr(dcm, "ProtocolName", "")
+        or f"Sequence {getattr(dcm, 'SeriesNumber', 'Unknown')}"
+    ).strip() or "Unnamed sequence"
+
+    try:
+        instance_number = int(dcm.InstanceNumber)
+    except (AttributeError, TypeError, ValueError):
+        instance_number = len(series_dict.get(series_name, Series(series_name)).slices)
+
+    position = None
+    if hasattr(dcm, "ImagePositionPatient"):
+        try:
+            position = tuple(float(value) for value in dcm.ImagePositionPatient)
+        except (TypeError, ValueError):
+            position = None
+
+    center, width = get_window_values(dcm, pixels)
+
+    if pixels.ndim == 2:
+        frames = [pixels]
+    elif pixels.ndim == 3:
+        frames = [pixels[frame] for frame in range(pixels.shape[0])]
+    else:
+        warnings.append(f"{filename}: unsupported pixel array shape {pixels.shape}")
+        return
+
+    if series_name not in series_dict:
+        spacing = getattr(dcm, "PixelSpacing", [1.0, 1.0])
+        row_spacing = safe_float(spacing[0], 1.0)
+        column_spacing = safe_float(spacing[1], 1.0)
+
+        series_dict[series_name] = Series(
+            name=series_name,
+            row_spacing=max(row_spacing, 1e-6),
+            column_spacing=max(column_spacing, 1e-6),
+        )
+
+    for frame_index, frame in enumerate(frames):
+        series_dict[series_name].slices.append(
+            Slice(
+                instance_number=instance_number + frame_index,
+                position=position,
+                pixel_array=frame,
+                window_center=center,
+                window_width=width,
+            )
+        )
+
+
+def extract_patient_metadata(dcm, patient: dict) -> None:
+    if patient["name"] == "Unknown" and hasattr(dcm, "PatientName"):
+        patient["name"] = str(dcm.PatientName) or "Unknown"
+    if patient["id"] == "N/A" and hasattr(dcm, "PatientID"):
+        patient["id"] = str(dcm.PatientID) or "N/A"
+    if patient["date"] == "N/A" and hasattr(dcm, "StudyDate"):
+        patient["date"] = str(dcm.StudyDate) or "N/A"
+    if patient["manufacturer"] == "N/A" and hasattr(dcm, "Manufacturer"):
+        patient["manufacturer"] = str(dcm.Manufacturer) or "N/A"
+
+
+def process_dicom_bytes(
+    data: bytes,
+    filename: str,
+    series_dict: dict[str, Series],
+    warnings: list[str],
+    patient: dict,
+) -> None:
+    try:
+        dcm = pydicom.dcmread(io.BytesIO(data), force=True)
+
+        if not hasattr(dcm, "PixelData"):
+            warnings.append(f"{filename}: no PixelData element")
+            return
+
+        pixels = normalize_pixels(dcm)
+        add_slice(series_dict, dcm, pixels, warnings, filename)
+        extract_patient_metadata(dcm, patient)
+
+    except InvalidDicomError as exc:
+        warnings.append(f"{filename}: not recognized as DICOM — {exc}")
+    except NotImplementedError as exc:
+        warnings.append(
+            f"{filename}: unsupported transfer syntax or pixel format — {exc}"
+        )
+    except Exception as exc:
+        warnings.append(
+            f"{filename}: {type(exc).__name__}: {exc}"
+        )
+
+
+@st.cache_data(show_spinner="Extracting and parsing DICOM files...")
+def parse_archive(file_bytes: bytes):
+    series_dict: dict[str, Series] = {}
     warnings: list[str] = []
+    archive_entries: list[str] = []
     patient = {
-        "name": "Anonymous",
+        "name": "Unknown",
         "id": "N/A",
         "date": "N/A",
         "manufacturer": "N/A",
     }
 
-    with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
-        for info in archive.infolist():
-            if info.is_dir():
-                continue
+    def process_zip_bytes(zip_bytes: bytes, label: str) -> None:
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+                for info in archive.infolist():
+                    if info.is_dir():
+                        continue
 
-            path_parts = [part for part in info.filename.split("/") if part]
-            if not path_parts or path_parts[0] == "__MACOSX__":
-                continue
+                    entry_name = f"{label}/{info.filename}"
+                    archive_entries.append(entry_name)
 
-            try:
-                with archive.open(info) as file_handle:
-                    data = file_handle.read()
+                    path_parts = [p for p in info.filename.split("/") if p]
+                    if not path_parts or path_parts[0] == "__MACOSX__":
+                        continue
 
-                dcm = pydicom.dcmread(io.BytesIO(data), force=True)
-                if not hasattr(dcm, "pixel_array"):
-                    continue
+                    lower_name = info.filename.lower()
 
-                pixels = dcm.pixel_array.astype(np.float32)
+                    with archive.open(info) as handle:
+                        data = handle.read()
 
-                slope = _safe_float(getattr(dcm, "RescaleSlope", 1.0), 1.0)
-                intercept = _safe_float(getattr(dcm, "RescaleIntercept", 0.0), 0.0)
-                pixels = pixels * slope + intercept
+                    if lower_name.endswith(".zip"):
+                        process_zip_bytes(data, entry_name)
+                    else:
+                        process_dicom_bytes(
+                            data,
+                            entry_name,
+                            series_dict,
+                            warnings,
+                            patient,
+                        )
 
-                if not np.isfinite(pixels).all():
-                    pixels = np.nan_to_num(pixels, nan=0.0, posinf=0.0, neginf=0.0)
+        except zipfile.BadZipFile as exc:
+            warnings.append(f"{label}: invalid ZIP — {exc}")
 
-                series_name = str(
-                    getattr(dcm, "SeriesDescription", "")
-                    or getattr(dcm, "ProtocolName", "")
-                    or f"Sequence {getattr(dcm, 'SeriesNumber', 'Unknown')}"
-                ).strip()
+    process_zip_bytes(file_bytes, "uploaded.zip")
 
-                try:
-                    instance_number = int(dcm.InstanceNumber)
-                except (AttributeError, TypeError, ValueError):
-                    instance_number = len(series.get(series_name, Series(series_name)).slices)
+    for series_item in series_dict.values():
+        series_item.slices.sort(key=slice_sort_key)
 
-                position = None
-                if hasattr(dcm, "ImagePositionPatient"):
-                    try:
-                        position = tuple(float(value) for value in dcm.ImagePositionPatient)
-                    except (TypeError, ValueError):
-                        position = None
-
-                window_center, window_width = _get_window_values(dcm, pixels)
-
-                slice_item = Slice(
-                    instance_number=instance_number,
-                    position=position,
-                    pixel_array=pixels,
-                    window_center=window_center,
-                    window_width=window_width,
-                )
-
-                if series_name not in series:
-                    spacing = getattr(dcm, "PixelSpacing", [1.0, 1.0])
-                    row_spacing = _safe_float(spacing[0], 1.0)
-                    column_spacing = _safe_float(spacing[1], 1.0)
-                    series[series_name] = Series(
-                        name=series_name,
-                        row_spacing=max(row_spacing, 1e-6),
-                        column_spacing=max(column_spacing, 1e-6),
-                    )
-
-                series[series_name].slices.append(slice_item)
-
-                if patient["name"] == "Anonymous" and hasattr(dcm, "PatientName"):
-                    patient["name"] = str(dcm.PatientName) or "Anonymous"
-                if patient["id"] == "N/A" and hasattr(dcm, "PatientID"):
-                    patient["id"] = str(dcm.PatientID) or "N/A"
-                if patient["date"] == "N/A" and hasattr(dcm, "StudyDate"):
-                    patient["date"] = str(dcm.StudyDate) or "N/A"
-                if patient["manufacturer"] == "N/A" and hasattr(dcm, "Manufacturer"):
-                    patient["manufacturer"] = str(dcm.Manufacturer) or "N/A"
-
-            except Exception as exc:
-                warnings.append(f"{info.filename}: {type(exc).__name__}: {exc}")
-
-    for item in series.values():
-        item.slices.sort(key=_slice_sort_key)
-
-    return series, warnings, patient
+    return series_dict, warnings, archive_entries, patient
 
 
-def encode_float32_array(array: np.ndarray) -> str:
-    """Encode a little-endian float32 array for safe decoding in JavaScript."""
+def apply_enhancement(pixels: np.ndarray) -> np.ndarray:
+    image = np.asarray(pixels, dtype=np.float32)
+    shifted = image - float(np.min(image)) + 1.0
+
+    log_image = np.log(shifted)
+    sigma = max(1.0, max(image.shape) / 6.0)
+    low_frequency = ndimage.gaussian_filter(log_image, sigma=sigma)
+    corrected = np.exp(log_image - low_frequency)
+
+    smooth = ndimage.gaussian_filter(corrected, sigma=1.2)
+    suppressed = corrected - 0.35 * (corrected - smooth)
+    enhanced = suppressed - 0.20 * ndimage.laplace(suppressed)
+
+    return np.clip(enhanced, 0.0, None).astype(np.float32)
+
+
+def encode_float32(array: np.ndarray) -> str:
     contiguous = np.ascontiguousarray(array, dtype="<f4")
     return base64.b64encode(contiguous.tobytes()).decode("ascii")
 
 
-def build_viewer_payload(
-    selected_series: dict[str, Series],
-    ai_mode: bool,
-) -> tuple[list[dict], list[str]]:
+def build_payload(selected: dict[str, Series], enhancement: bool):
     payload = []
-    warnings: list[str] = []
+    warnings = []
 
-    for name, series_item in selected_series.items():
+    for name, series_item in selected.items():
         if len(series_item.slices) > MAX_SLICES_PER_SERIES:
             warnings.append(
-                f"{name}: showing first {MAX_SLICES_PER_SERIES} of "
-                f"{len(series_item.slices)} slices to limit browser memory use."
+                f"{name}: displaying first {MAX_SLICES_PER_SERIES} of "
+                f"{len(series_item.slices)} slices."
             )
 
-        encoded_slices = []
-        for slice_item in series_item.slices[:MAX_SLICES_PER_SERIES]:
-            pixels = apply_ai_corrections(slice_item.pixel_array) if ai_mode else slice_item.pixel_array
-            encoded_slices.append(
+        slices = []
+        for item in series_item.slices[:MAX_SLICES_PER_SERIES]:
+            pixels = apply_enhancement(item.pixel_array) if enhancement else item.pixel_array
+            slices.append(
                 {
-                    "pixels": encode_float32_array(pixels),
+                    "pixels": encode_float32(pixels),
                     "rows": int(pixels.shape[0]),
                     "cols": int(pixels.shape[1]),
-                    "windowCenter": float(slice_item.window_center),
-                    "windowWidth": float(slice_item.window_width),
+                    "windowCenter": float(item.window_center),
+                    "windowWidth": float(item.window_width),
                 }
             )
 
@@ -290,7 +321,7 @@ def build_viewer_payload(
                 "title": name,
                 "rowSpacing": float(series_item.row_spacing),
                 "columnSpacing": float(series_item.column_spacing),
-                "slices": encoded_slices,
+                "slices": slices,
             }
         )
 
@@ -298,233 +329,210 @@ def build_viewer_payload(
 
 
 def render_viewer(payload: list[dict]) -> None:
-    if not payload:
-        st.warning("No series selected.")
-        return
-
     columns = min(3, len(payload))
     rows = math.ceil(len(payload) / columns)
 
-    panels_html = ""
+    panels = ""
     for index in range(len(payload)):
-        panels_html += f"""
+        panels += f"""
         <div class="viewport-panel">
             <div class="viewport-title" id="title-{index}"></div>
-            <canvas id="canvas-{index}" width="512" height="512"></canvas>
+            <canvas id="canvas-{index}"></canvas>
             <div class="viewport-status" id="status-{index}"></div>
         </div>
         """
 
-    # Escape "</" so a malicious DICOM string cannot terminate the JSON block.
     safe_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
 
     html = f"""
-<div class="viewport-grid" style="grid-template-columns: repeat({columns}, minmax(0, 1fr));">
-    {panels_html}
+<div class="viewport-grid" style="grid-template-columns:repeat({columns},minmax(0,1fr));">
+{panels}
 </div>
 
 <script type="application/json" id="workstation-data">{safe_json}</script>
 <script>
 (() => {{
-    const dataElement = document.getElementById("workstation-data");
-    const workstationData = JSON.parse(dataElement.textContent);
-    const panelCount = workstationData.length;
-    const currentIndices = new Array(panelCount).fill(0);
-    const windowCenters = [];
-    const windowWidths = [];
-    const caliperState = {{ active: false, panel: null, startX: 0, startY: 0, endX: 0, endY: 0 }};
-    const dragState = {{ active: false, panel: null, lastX: 0, lastY: 0 }};
+    const workstationData = JSON.parse(
+        document.getElementById("workstation-data").textContent
+    );
+    const current = new Array(workstationData.length).fill(0);
+    const centers = [];
+    const widths = [];
+    const caliper = {{active:false, panel:null, x1:0, y1:0, x2:0, y2:0}};
+    const drag = {{active:false, panel:null, lastX:0, lastY:0}};
 
-    workstationData.forEach((series, index) => {{
-        const first = series.slices[0];
-        windowCenters[index] = first ? first.windowCenter : 0;
-        windowWidths[index] = first ? first.windowWidth : 1;
+    workstationData.forEach((series, i) => {{
+        centers[i] = series.slices[0]?.windowCenter ?? 0;
+        widths[i] = series.slices[0]?.windowWidth ?? 1;
     }});
 
-    function decodePixels(base64) {{
+    function decode(base64) {{
         const binary = atob(base64);
         const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {{
-            bytes[i] = binary.charCodeAt(i);
-        }}
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         return new Float32Array(bytes.buffer);
     }}
 
-    function renderPanel(index) {{
+    function render(index) {{
         const series = workstationData[index];
-        const sliceIndex = currentIndices[index];
-        const slice = series.slices[sliceIndex];
+        const slice = series.slices[current[index]];
         const canvas = document.getElementById("canvas-" + index);
         const context = canvas.getContext("2d");
+        if (!slice || !context) return;
 
-        if (!series || !slice || !context) {{
-            return;
-        }}
+        document.getElementById("title-" + index).textContent = series.title;
 
-        const titleElement = document.getElementById("title-" + index);
-        const statusElement = document.getElementById("status-" + index);
-        if (titleElement) {{
-            titleElement.textContent = series.title;
-        }}
-
-        const pixels = decodePixels(slice.pixels);
-        const imageData = context.createImageData(slice.cols, slice.rows);
-        const output = imageData.data;
-
-        const center = windowCenters[index];
-        const width = Math.max(1, windowWidths[index]);
-        const lower = center - width / 2;
-        const upper = center + width / 2;
-        const scale = 255 / width;
-
-        for (let i = 0; i < pixels.length; i++) {{
-            const value = Math.min(upper, Math.max(lower, pixels[i]));
-            const gray = Math.max(0, Math.min(255, Math.round((value - lower) * scale)));
-            const offset = i * 4;
-            output[offset] = gray;
-            output[offset + 1] = gray;
-            output[offset + 2] = gray;
-            output[offset + 3] = 255;
-        }}
-
+        const values = decode(slice.pixels);
         canvas.width = slice.cols;
         canvas.height = slice.rows;
-        context.putImageData(imageData, 0, 0);
 
-        if (caliperState.active && caliperState.panel === index) {{
+        const image = context.createImageData(slice.cols, slice.rows);
+        const out = image.data;
+        const center = centers[index];
+        const width = Math.max(1, widths[index]);
+        const low = center - width / 2;
+        const scale = 255 / width;
+
+        for (let i = 0; i < values.length; i++) {{
+            const value = Math.min(center + width / 2, Math.max(low, values[i]));
+            const gray = Math.max(0, Math.min(255, Math.round((value - low) * scale)));
+            const o = i * 4;
+            out[o] = out[o + 1] = out[o + 2] = gray;
+            out[o + 3] = 255;
+        }}
+
+        context.putImageData(image, 0, 0);
+
+        if (caliper.active && caliper.panel === index) {{
             context.strokeStyle = "#22d3ee";
             context.lineWidth = 2;
             context.beginPath();
-            context.moveTo(caliperState.startX, caliperState.startY);
-            context.lineTo(caliperState.endX, caliperState.endY);
+            context.moveTo(caliper.x1, caliper.y1);
+            context.lineTo(caliper.x2, caliper.y2);
             context.stroke();
 
-            const dxPixels = caliperState.endX - caliperState.startX;
-            const dyPixels = caliperState.endY - caliperState.startY;
-            const dxMm = dxPixels * series.columnSpacing;
-            const dyMm = dyPixels * series.rowSpacing;
-            const distanceMm = Math.sqrt(dxMm * dxMm + dyMm * dyMm);
+            const dx = (caliper.x2 - caliper.x1) * series.columnSpacing;
+            const dy = (caliper.y2 - caliper.y1) * series.rowSpacing;
+            const distance = Math.sqrt(dx * dx + dy * dy);
 
-            context.font = "bold 14px ui-monospace, monospace";
+            context.font = "bold 14px monospace";
             context.fillStyle = "#22d3ee";
             context.shadowColor = "#000";
             context.shadowBlur = 4;
-            context.fillText(distanceMm.toFixed(2) + " mm", caliperState.endX + 8, caliperState.endY - 8);
+            context.fillText(distance.toFixed(2) + " mm", caliper.x2 + 8, caliper.y2 - 8);
         }}
 
-        if (statusElement) {{
-            statusElement.textContent =
-                "Slice " + (sliceIndex + 1) + "/" + series.slices.length +
-                " | W " + Math.round(width) +
-                " | L " + Math.round(center);
-        }}
+        document.getElementById("status-" + index).textContent =
+            `Slice ${{current[index] + 1}}/${{series.slices.length}} | ` +
+            `W ${{Math.round(width)}} | L ${{Math.round(center)}}`;
     }}
 
-    function canvasCoordinates(event, canvas) {{
+    function coords(event, canvas) {{
         const rect = canvas.getBoundingClientRect();
         return [
-            (event.clientX - rect.left) * (canvas.width / rect.width),
-            (event.clientY - rect.top) * (canvas.height / rect.height),
+            (event.clientX - rect.left) * canvas.width / rect.width,
+            (event.clientY - rect.top) * canvas.height / rect.height
         ];
     }}
 
     workstationData.forEach((series, index) => {{
         const canvas = document.getElementById("canvas-" + index);
-        if (!canvas) {{
-            return;
-        }}
+        if (!canvas) return;
 
-        canvas.addEventListener("wheel", (event) => {{
+        canvas.addEventListener("wheel", event => {{
             event.preventDefault();
-            const direction = event.deltaY > 0 ? 1 : -1;
             const count = series.slices.length;
-            currentIndices[index] = (currentIndices[index] + direction + count) % count;
-            renderPanel(index);
-        }}, {{ passive: false }});
+            current[index] = (current[index] + (event.deltaY > 0 ? 1 : -1) + count) % count;
+            render(index);
+        }}, {{passive:false}});
 
-        canvas.addEventListener("mousedown", (event) => {{
-            const [x, y] = canvasCoordinates(event, canvas);
+        canvas.addEventListener("mousedown", event => {{
+            const [x, y] = coords(event, canvas);
 
             if (event.shiftKey) {{
-                caliperState.active = true;
-                caliperState.panel = index;
-                caliperState.startX = x;
-                caliperState.startY = y;
-                caliperState.endX = x;
-                caliperState.endY = y;
+                Object.assign(caliper, {{
+                    active:true, panel:index, x1:x, y1:y, x2:x, y2:y
+                }});
             }} else {{
-                dragState.active = true;
-                dragState.panel = index;
-                dragState.lastX = event.clientX;
-                dragState.lastY = event.clientY;
-                caliperState.active = false;
+                Object.assign(drag, {{
+                    active:true, panel:index,
+                    lastX:event.clientX, lastY:event.clientY
+                }});
+                caliper.active = false;
             }}
         }});
     }});
 
-    window.addEventListener("mousemove", (event) => {{
-        if (caliperState.active && caliperState.panel !== null) {{
-            const canvas = document.getElementById("canvas-" + caliperState.panel);
+    window.addEventListener("mousemove", event => {{
+        if (caliper.active && caliper.panel !== null) {{
+            const canvas = document.getElementById("canvas-" + caliper.panel);
             if (!canvas) return;
-            const [x, y] = canvasCoordinates(event, canvas);
-            caliperState.endX = x;
-            caliperState.endY = y;
-            renderPanel(caliperState.panel);
-        }} else if (dragState.active && dragState.panel !== null) {{
-            const deltaX = event.clientX - dragState.lastX;
-            const deltaY = event.clientY - dragState.lastY;
-            dragState.lastX = event.clientX;
-            dragState.lastY = event.clientY;
-
-            windowWidths[dragState.panel] = Math.max(1, windowWidths[dragState.panel] + deltaX * 2);
-            windowCenters[dragState.panel] = windowCenters[dragState.panel] - deltaY * 2;
-            renderPanel(dragState.panel);
+            [caliper.x2, caliper.y2] = coords(event, canvas);
+            render(caliper.panel);
+        }} else if (drag.active && drag.panel !== null) {{
+            widths[drag.panel] = Math.max(
+                1,
+                widths[drag.panel] + (event.clientX - drag.lastX) * 2
+            );
+            centers[drag.panel] -= (event.clientY - drag.lastY) * 2;
+            drag.lastX = event.clientX;
+            drag.lastY = event.clientY;
+            render(drag.panel);
         }}
     }});
 
     window.addEventListener("mouseup", () => {{
-        dragState.active = false;
+        drag.active = false;
     }});
 
-    for (let index = 0; index < panelCount; index++) {{
-        renderPanel(index);
-    }}
+    for (let i = 0; i < workstationData.length; i++) render(i);
 }})();
 </script>
 """
 
-    components.html(html, height=max(420, 430 * rows), scrolling=False)
+    components.html(html, height=max(430, 440 * rows), scrolling=False)
 
 
-uploaded_file = st.sidebar.file_uploader("Upload Patient ZIP", type=["zip"])
-ai_mode = st.sidebar.toggle(
-    "Enhancement mode",
-    value=False,
-    help="Applies classical bias-field, ringing-suppression, and sharpening filters. This is not AI super-resolution.",
-)
+uploaded_file = st.sidebar.file_uploader("Upload DICOM ZIP", type=["zip"])
+enhancement = st.sidebar.toggle("Enhancement mode", value=False)
 
 if uploaded_file is None:
-    st.info("Upload a DICOM ZIP archive to begin.")
+    st.info("Upload a ZIP archive containing DICOM files.")
     st.stop()
 
 try:
-    file_bytes = uploaded_file.getvalue()
-    series_dict, parse_warnings, patient = parse_dicom_zip(file_bytes)
+    series_dict, warnings, entries, patient = parse_archive(uploaded_file.getvalue())
 except Exception as exc:
-    st.error(f"Could not read the uploaded ZIP: {type(exc).__name__}: {exc}")
+    st.error(f"Failed to read archive: {type(exc).__name__}: {exc}")
     st.stop()
+
+with st.expander("Archive diagnosis", expanded=not series_dict):
+    st.write(f"**Entries found:** {len(entries)}")
+    if entries:
+        st.write("\n".join(entries[:100]))
+    st.write(f"**Warnings:** {len(warnings)}")
+    if warnings:
+        st.write("\n".join(warnings[:200]))
 
 if not series_dict:
-    st.error("No readable DICOM images with pixel data were found in this archive.")
-    if parse_warnings:
-        with st.expander("Parsing warnings"):
-            st.write("\n".join(parse_warnings))
+    st.error(
+        "No readable DICOM images with usable pixel data were found. "
+        "Open **Archive diagnosis** above: it lists every archived file and the exact reason each one was skipped."
+    )
+
+    st.markdown("### Common causes")
+    st.markdown(
+        "- The files use a compressed transfer syntax that pydicom cannot decode in this environment.\n"
+        "- The archive contains another ZIP inside it; this version now checks nested ZIPs.\n"
+        "- The files are not actually DICOM, despite having a `.dcm` extension.\n"
+        "- Pixel data cannot be accessed because required DICOM tags or image handlers are missing."
+    )
     st.stop()
 
-series_names = sorted(series_dict.keys())
+series_names = sorted(series_dict)
 selected_names = st.sidebar.multiselect(
-    f"Select sequences (up to {MAX_SERIES})",
-    options=series_names,
+    f"Select sequences (maximum {MAX_SERIES})",
+    series_names,
     default=series_names[: min(3, len(series_names))],
 )
 selected_names = selected_names[:MAX_SERIES]
@@ -535,16 +543,18 @@ st.sidebar.text(f"ID: {patient['id']}")
 st.sidebar.text(f"Study date: {patient['date']}")
 st.sidebar.text(f"Scanner: {patient['manufacturer']}")
 
-if parse_warnings:
-    with st.sidebar.expander(f"Skipped files ({len(parse_warnings)})"):
-        st.write("\n".join(parse_warnings))
+if warnings:
+    with st.sidebar.expander(f"Warnings ({len(warnings)})"):
+        st.write("\n".join(warnings))
 
 if not selected_names:
-    st.warning("Select at least one sequence to display.")
+    st.warning("Select at least one sequence.")
     st.stop()
 
-selected_series = {name: series_dict[name] for name in selected_names}
-payload, payload_warnings = build_viewer_payload(selected_series, ai_mode)
+payload, payload_warnings = build_payload(
+    {name: series_dict[name] for name in selected_names},
+    enhancement,
+)
 
 for warning in payload_warnings:
     st.warning(warning)
@@ -552,7 +562,6 @@ for warning in payload_warnings:
 render_viewer(payload)
 
 st.caption(
-    "Controls: scroll to change slice; left-drag to adjust window/level; "
-    "Shift+drag to draw a caliper. Measurements use each series’ PixelSpacing "
-    "but do not account for oblique orientation or voxel spacing and are not for clinical use."
+    "Scroll: change slice. Left-drag: window/level. Shift+drag: caliper. "
+    "Measurements use PixelSpacing only and are not clinically validated."
 )
