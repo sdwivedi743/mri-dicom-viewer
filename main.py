@@ -11,8 +11,8 @@ import base64
 # Force wide-screen professional diagnostic layout
 st.set_page_config(page_title="AI Multi-Sequence MRI Workstation", page_icon="🧠", layout="wide")
 
-# Inject global CSS for a true PACS dark medical terminal theme
-st.markdown("""
+# Inject CSS styling safely via st.html to prevent modern Streamlit TypeError crashes
+st.html("""
     <style>
     body, .stApp { background-color: #080808 !important; color: #e0e0e0 !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important; }
     [data-testid="stSidebar"] { background-color: #121212 !important; border-right: 1px solid #262626 !important; }
@@ -20,7 +20,7 @@ st.markdown("""
     .stToggle { background: #161616 !important; padding: 10px !important; border-radius: 6px !important; border: 1px solid #262626 !important; margin-bottom: 15px !important; }
     h1, h2, h3 { color: #00ffcc !important; font-weight: 500 !important; }
     </style>
-""", unsafe_allowed_html=True)
+""")
 
 st.title("🧠 AI Multi-Sequence MRI Diagnostics Workstation")
 st.write("Upload a patient `.zip` directory containing multiple MRI sequences.")
@@ -97,7 +97,7 @@ if uploaded_file is not None:
     if len(series_groups) > 0:
         all_series_names = sorted(list(series_groups.keys()))
         
-        # 1. SIDEBAR NAVIGATION HIERARCHY (Restored Sequence Selector Matrix)
+        # 1. SIDEBAR NAVIGATION HIERARCHY
         st.sidebar.markdown("### 📁 Sequence Directory")
         selected_sequences = st.sidebar.multiselect(
             "Select sequences to display (Up to 6 views):",
@@ -110,7 +110,7 @@ if uploaded_file is not None:
         num_series = len(active_sequences)
         
         if num_series == 0:
-            st.warning("Please check at least one sequence from the left directory to display the diagnostics console.")
+            st.sidebar.warning("Please check at least one sequence from the directory to display.")
         else:
             # Safely capture metadata parameters from the primary sequence channel
             p_name, p_id, s_date, s_man = "Anonymous", "N/A", "N/A", "N/A"
