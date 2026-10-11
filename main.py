@@ -9,7 +9,7 @@ st.title("🏥 MRI DICOM Viewer")
 st.write("Upload a `.dcm` file below to view the medical image.")
 
 # 2. Create a file uploader button
-uploaded_file = st.file_uploader("Choose a DICOM file", type=["dcm"])
+uploaded_file = st.file_uploader("Choose a DICOM file")
 
 if uploaded_file is not None:
     try:
