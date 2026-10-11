@@ -9,7 +9,7 @@ import base64
 
 st.set_page_config(page_title="Pro MRI DICOM Viewer", page_icon="🧠", layout="wide")
 
-# Styling to make it look clean and professional like a medical suite
+# Dark medical theme styling
 st.markdown("""
     <style>
     .reportview-container { background: #111111; color: white; }
@@ -20,7 +20,6 @@ st.markdown("""
 
 st.title("🧠 Pro Medical MRI DICOM Viewer")
 
-# File uploader right at the top
 uploaded_file = st.file_uploader("Upload a .zip folder containing patient MRI series", type=["zip"])
 
 if uploaded_file is not None:
@@ -62,7 +61,7 @@ if uploaded_file is not None:
         
         st.sidebar.metric(label="Total Slices", value=total_slices)
         
-        # Extract metadata from the first slice for display
+        # FIX: Extract metadata from the FIRST slice properly using [0][1]
         sample_dcm = current_slices[0][1]
         st.sidebar.subheader("📋 Patient Metadata")
         st.sidebar.write(f"**Name:** {getattr(sample_dcm, 'PatientName', 'Anonymous')}")
@@ -70,10 +69,10 @@ if uploaded_file is not None:
         st.sidebar.write(f"**Date:** {getattr(sample_dcm, 'StudyDate', 'N/A')}")
         
         # 2. CONVERT ALL SLICES TO HIGH-SPEED IMAGES FOR THE BROWSER
-        # To avoid server lag, we build all image arrays up-front and pass them to a local browser tool
         encoded_slices = []
         for _, dcm in current_slices:
             pixels = dcm.pixel_array.astype(float)
+            
             # Default windowing fallbacks
             dw = float(dcm.WindowWidth if isinstance(getattr(dcm, 'WindowWidth', None), (list, pydicom.multival.MultiValue)) else getattr(dcm, 'WindowWidth', pixels.max() - pixels.min()))
             dl = float(dcm.WindowCenter if isinstance(getattr(dcm, 'WindowCenter', None), (list, pydicom.multival.MultiValue)) else getattr(dcm, 'WindowCenter', (pixels.max() + pixels.min()) / 2))
@@ -97,14 +96,13 @@ if uploaded_file is not None:
                 "default_l": dl
             })
 
-        # 3. INTERACTIVE MOUSE CONTROLLER ENGINE (HTML5/JavaScript Canvas)
-        # This eliminates Python delay by processing dragging/scrolling completely inside your mouse/browser
+        # 3. INTERACTIVE MOUSE CONTROLLER ENGINE
         slices_json = json.dumps(encoded_slices)
         
         html_code = f"""
         <div style="background-color: #000; padding: 15px; border-radius: 8px; color: #fff; font-family: sans-serif; text-align: center;">
             <p style="margin: 0 0 10px 0; font-size: 14px; color: #aaa;">
-                🖱️ <b>Mouse Wheel:</b> Scroll Slices | ↕️ <b>Left Click & Drag Vertically:</b> Adjust Brightness | ↔️ <b>Horizontal Drag:</b> Adjust Contrast
+                外️ <b>Mouse Wheel:</b> Scroll Slices | ↕️ <b>Left Click & Drag Vertically:</b> Brightness | ↔️ <b>Horizontal Drag:</b> Contrast
             </p>
             <canvas id="dicomCanvas" style="border: 2px solid #333; max-width: 100%; background: #000; cursor: contrast;"></canvas>
             <div id="statusInfo" style="margin-top: 10px; font-weight: bold; font-size: 15px; color: #4CAF50;">Slice: 1 / {total_slices}</div>
@@ -119,13 +117,11 @@ if uploaded_file is not None:
             const ctx = canvas.getContext('2d');
             const statusInfo = document.getElementById('statusInfo');
             
-            // Contrast/Window variables based on active slice
             let windowWidth = slices[currentIdx].default_w;
             let windowLevel = slices[currentIdx].default_l;
             let isDragging = false;
             let startX, startY;
 
-            // Load and draw image locally in browser
             const imgObj = new Image();
             function renderSlice() {{
                 imgObj.src = slices[currentIdx].base64;
@@ -133,7 +129,6 @@ if uploaded_file is not None:
                     canvas.width = imgObj.width || 512;
                     canvas.height = imgObj.height || 512;
                     
-                    // Simple client side windowing filter emulation using CSS effects dynamically mapped to drags
                     let brightnessPct = (windowLevel / (slices[currentIdx].raw_max || 255)) * 100;
                     let contrastPct = (255 / (windowWidth || 1)) * 100;
                     
@@ -145,7 +140,6 @@ if uploaded_file is not None:
                 }};
             }}
             
-            // INTERACTION 1: MOUSE WHEEL SCROLLING
             canvas.addEventListener('wheel', function(e) {{
                 e.preventDefault();
                 if (e.deltaY > 0) {{
@@ -156,7 +150,6 @@ if uploaded_file is not None:
                 renderSlice();
             }});
 
-            // INTERACTION 2: CLICK AND DRAG FOR CONTRAST / LEVEL
             canvas.addEventListener('mousedown', function(e) {{
                 isDragging = true;
                 startX = e.clientX;
@@ -171,9 +164,7 @@ if uploaded_file is not None:
                 startX = e.clientX;
                 startY = e.clientY;
 
-                // Horizontal movement shifts Window Width (Contrast)
                 windowWidth += deltaX * 2;
-                // Vertical movement shifts Window Level (Brightness)
                 windowLevel -= deltaY * 2;
                 
                 renderSlice();
@@ -183,12 +174,10 @@ if uploaded_file is not None:
                 isDragging = false;
             }});
             
-            // Start the engine
             renderSlice();
         </script>
         """
         
-        # Display the custom high-speed viewport inside Streamlit
         st.components.v1.html(html_code, height=620)
         
     else:
