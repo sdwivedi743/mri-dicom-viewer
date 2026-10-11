@@ -1,0 +1,9 @@
+pydicom
+numpy
+pillow
+streamlit
+torch
+torchvision
+scikit-image
+opencv-python-headless
+pytest
