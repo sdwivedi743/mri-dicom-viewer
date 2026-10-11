@@ -4,97 +4,192 @@ from PIL import Image
 import numpy as np
 import zipfile
 import io
+import json
+import base64
 
-st.set_page_config(page_title="Advanced MRI DICOM Viewer", page_icon="🧠", layout="centered")
-st.title("🧠 Advanced MRI DICOM Viewer")
-st.write("Upload a `.zip` folder containing your MRI scan series.")
+st.set_page_config(page_title="Pro MRI DICOM Viewer", page_icon="🧠", layout="wide")
 
-uploaded_file = st.file_uploader("Drop your ZIP folder here")
+# Styling to make it look clean and professional like a medical suite
+st.markdown("""
+    <style>
+    .reportview-container { background: #111111; color: white; }
+    .sidebar .sidebar-content { background: #1e1e1e; }
+    div.stButton > button:first-child { width: 100%; }
+    </style>
+""", unsafe_allowed_html=True)
+
+st.title("🧠 Pro Medical MRI DICOM Viewer")
+
+# File uploader right at the top
+uploaded_file = st.file_uploader("Upload a .zip folder containing patient MRI series", type=["zip"])
 
 if uploaded_file is not None:
-    # Dictionary structure: { "Series Name": [ (InstanceNumber, dicom_dataset), ... ] }
     series_groups = {}
 
-    if zipfile.is_zipfile(uploaded_file):
-        with st.spinner("Unzipping and sorting MRI sequences... Please wait."):
-            with zipfile.ZipFile(uploaded_file) as z:
-                for file_info in z.infolist():
-                    if not file_info.is_dir():
-                        try:
-                            with z.open(file_info) as f:
-                                bytes_data = f.read()
-                                dcm = pydicom.dcmread(io.BytesIO(bytes_data), force=True)
+    with st.spinner("Processing MRI datasets... Please wait."):
+        with zipfile.ZipFile(uploaded_file) as z:
+            for file_info in z.infolist():
+                if not file_info.is_dir():
+                    try:
+                        with z.open(file_info) as f:
+                            bytes_data = f.read()
+                            dcm = pydicom.dcmread(io.BytesIO(bytes_data), force=True)
+                            
+                            if hasattr(dcm, 'pixel_array'):
+                                series_name = getattr(dcm, 'SeriesDescription', None)
+                                if not series_name or str(series_name).strip() == "":
+                                    series_name = f"Sequence {getattr(dcm, 'SeriesNumber', 'Unknown')}"
                                 
-                                if hasattr(dcm, 'pixel_array'):
-                                    # Group by Series Description (e.g., T2, FLAIR). Fallback to Series Instance UID if blank.
-                                    series_name = getattr(dcm, 'SeriesDescription', None)
-                                    if not series_name or str(series_name).strip() == "":
-                                        series_name = f"Series {getattr(dcm, 'SeriesNumber', 'Unknown')}"
-                                    
-                                    # Get slice sorting number
-                                    instance_num = int(getattr(dcm, 'InstanceNumber', 0))
-                                    
-                                    if series_name not in series_groups:
-                                        series_groups[series_name] = []
-                                    series_groups[series_name].append((instance_num, dcm))
-                        except Exception:
-                            continue
-    else:
-        st.error("Please upload a folder packed as a .zip file.")
+                                instance_num = int(getattr(dcm, 'InstanceNumber', 0))
+                                
+                                if series_name not in series_groups:
+                                    series_groups[series_name] = []
+                                series_groups[series_name].append((instance_num, dcm))
+                    except Exception:
+                        continue
 
     if series_groups:
-        st.success(f"Successfully loaded {len(series_groups)} MRI sequence(s)!")
+        # 1. SIDEBAR SEQUENCE LISTING (Left Hand Side Selection)
+        st.sidebar.header("📁 Patient Sequences")
+        selected_series = st.sidebar.radio(
+            "Select MRI Sequence to View:", 
+            list(series_groups.keys())
+        )
         
-        # 1. FREELY SELECT THE MRI SEQUENCE / SERIES
-        selected_series = st.selectbox("🎯 Select MRI Sequence:", list(series_groups.keys()))
+        # Sort slices cleanly
+        current_slices = sorted(series_groups[selected_series], key=lambda x: x[0])
+        total_slices = len(current_slices)
         
-        # Sort the slices of the chosen sequence in correct order (1, 2, 3...)
-        current_series_slices = sorted(series_groups[selected_series], key=lambda x: x[0])
-        total_slices = len(current_series_slices)
+        st.sidebar.metric(label="Total Slices", value=total_slices)
         
-        # 2. SCROLL THROUGH IMAGES (SLICE SELECTOR)
-        if total_slices > 1:
-            slice_index = st.slider("🎞️ Scroll Through Slices:", 1, total_slices, 1) - 1
-        else:
-            slice_index = 0
-            st.info("This sequence only contains a single image slice.")
+        # Extract metadata from the first slice for display
+        sample_dcm = current_slices[0][1]
+        st.sidebar.subheader("📋 Patient Metadata")
+        st.sidebar.write(f"**Name:** {getattr(sample_dcm, 'PatientName', 'Anonymous')}")
+        st.sidebar.write(f"**ID:** {getattr(sample_dcm, 'PatientID', 'N/A')}")
+        st.sidebar.write(f"**Date:** {getattr(sample_dcm, 'StudyDate', 'N/A')}")
+        
+        # 2. CONVERT ALL SLICES TO HIGH-SPEED IMAGES FOR THE BROWSER
+        # To avoid server lag, we build all image arrays up-front and pass them to a local browser tool
+        encoded_slices = []
+        for _, dcm in current_slices:
+            pixels = dcm.pixel_array.astype(float)
+            # Default windowing fallbacks
+            dw = float(dcm.WindowWidth if isinstance(getattr(dcm, 'WindowWidth', None), (list, pydicom.multival.MultiValue)) else getattr(dcm, 'WindowWidth', pixels.max() - pixels.min()))
+            dl = float(dcm.WindowCenter if isinstance(getattr(dcm, 'WindowCenter', None), (list, pydicom.multival.MultiValue)) else getattr(dcm, 'WindowCenter', (pixels.max() + pixels.min()) / 2))
             
-        # Get the specific slice dataset chosen by the sliders
-        _, dicom_data = current_series_slices[slice_index]
-        pixel_array = dicom_data.pixel_array.astype(float)
-        
-        # 3. CONTRAST ADJUSTMENT SLIDERS
-        st.subheader("🎛️ Image Controls")
-        col_c1, col_c2 = st.columns(2)
-        
-        # Use medical Windowing defaults if available, otherwise calculate fallback ranges
-        default_window = float(dicom_data.WindowWidth[0] if isinstance(getattr(dicom_data, 'WindowWidth', None), (list, pydicom.multival.MultiValue)) else getattr(dicom_data, 'WindowWidth', pixel_array.max() - pixel_array.min()))
-        default_level = float(dicom_data.WindowCenter[0] if isinstance(getattr(dicom_data, 'WindowCenter', None), (list, pydicom.multival.MultiValue)) else getattr(dicom_data, 'WindowCenter', (pixel_array.max() + pixel_array.min()) / 2))
-        
-        with col_c1:
-            window_width = st.slider("Contrast (Window Width):", 1.0, float(pixel_array.max()*1.5), float(default_window))
-        with col_c2:
-            window_level = st.slider("Brightness (Window Level):", float(pixel_array.min()), float(pixel_array.max()), float(default_level))
+            # Normalize to 0-255 initially
+            if pixels.max() != pixels.min():
+                norm = ((pixels - pixels.min()) / (pixels.max() - pixels.min())) * 255.0
+            else:
+                norm = np.zeros(pixels.shape)
+                
+            img = Image.fromarray(norm.astype(np.uint8))
+            buffered = io.BytesIO()
+            img.save(buffered, format="JPEG")
+            img_str = base64.b64encode(buffered.getvalue()).decode()
             
-        # Apply the Contrast Window/Level calculations
-        lower_bound = window_level - (window_width / 2.0)
-        upper_bound = window_level + (window_width / 2.0)
+            encoded_slices.append({
+                "base64": f"data:image/jpeg;base64,{img_str}",
+                "raw_min": float(pixels.min()),
+                "raw_max": float(pixels.max()),
+                "default_w": dw,
+                "default_l": dl
+            })
+
+        # 3. INTERACTIVE MOUSE CONTROLLER ENGINE (HTML5/JavaScript Canvas)
+        # This eliminates Python delay by processing dragging/scrolling completely inside your mouse/browser
+        slices_json = json.dumps(encoded_slices)
         
-        # Clip values outside our window and scale to normal image range (0 - 255)
-        pixel_array = np.clip(pixel_array, lower_bound, upper_bound)
-        if upper_bound != lower_bound:
-            scaled_image = ((pixel_array - lower_bound) / (upper_bound - lower_bound)) * 255.0
-        else:
-            scaled_image = np.zeros(pixel_array.shape)
+        html_code = f"""
+        <div style="background-color: #000; padding: 15px; border-radius: 8px; color: #fff; font-family: sans-serif; text-align: center;">
+            <p style="margin: 0 0 10px 0; font-size: 14px; color: #aaa;">
+                🖱️ <b>Mouse Wheel:</b> Scroll Slices | ↕️ <b>Left Click & Drag Vertically:</b> Adjust Brightness | ↔️ <b>Horizontal Drag:</b> Adjust Contrast
+            </p>
+            <canvas id="dicomCanvas" style="border: 2px solid #333; max-width: 100%; background: #000; cursor: contrast;"></canvas>
+            <div id="statusInfo" style="margin-top: 10px; font-weight: bold; font-size: 15px; color: #4CAF50;">Slice: 1 / {total_slices}</div>
+        </div>
+
+        <script>
+            const slices = {slices_json};
+            let currentIdx = 0;
+            let total = {total_slices};
             
-        final_image = Image.fromarray(scaled_image.astype(np.uint8))
+            const canvas = document.getElementById('dicomCanvas');
+            const ctx = canvas.getContext('2d');
+            const statusInfo = document.getElementById('statusInfo');
+            
+            // Contrast/Window variables based on active slice
+            let windowWidth = slices[currentIdx].default_w;
+            let windowLevel = slices[currentIdx].default_l;
+            let isDragging = false;
+            let startX, startY;
+
+            // Load and draw image locally in browser
+            const imgObj = new Image();
+            function renderSlice() {{
+                imgObj.src = slices[currentIdx].base64;
+                imgObj.onload = function() {{
+                    canvas.width = imgObj.width || 512;
+                    canvas.height = imgObj.height || 512;
+                    
+                    // Simple client side windowing filter emulation using CSS effects dynamically mapped to drags
+                    let brightnessPct = (windowLevel / (slices[currentIdx].raw_max || 255)) * 100;
+                    let contrastPct = (255 / (windowWidth || 1)) * 100;
+                    
+                    ctx.clearRect(0,0,canvas.width,canvas.height);
+                    ctx.filter = `brightness(${{brightnessPct + 50}}%) contrast(${{contrastPct}}%)`;
+                    ctx.drawImage(imgObj, 0, 0);
+                    
+                    statusInfo.innerText = `Slice: ${{currentIdx + 1}} / ${{total}} | W: ${{Math.round(windowWidth)}} L: ${{Math.round(windowLevel)}}`;
+                }};
+            }}
+            
+            // INTERACTION 1: MOUSE WHEEL SCROLLING
+            canvas.addEventListener('wheel', function(e) {{
+                e.preventDefault();
+                if (e.deltaY > 0) {{
+                    currentIdx = (currentIdx + 1) % total;
+                }} else {{
+                    currentIdx = (currentIdx - 1 + total) % total;
+                }}
+                renderSlice();
+            }});
+
+            // INTERACTION 2: CLICK AND DRAG FOR CONTRAST / LEVEL
+            canvas.addEventListener('mousedown', function(e) {{
+                isDragging = true;
+                startX = e.clientX;
+                startY = e.clientY;
+            }});
+
+            window.addEventListener('mousemove', function(e) {{
+                if (!isDragging) return;
+                let deltaX = e.clientX - startX;
+                let deltaY = e.clientY - startY;
+                
+                startX = e.clientX;
+                startY = e.clientY;
+
+                // Horizontal movement shifts Window Width (Contrast)
+                windowWidth += deltaX * 2;
+                // Vertical movement shifts Window Level (Brightness)
+                windowLevel -= deltaY * 2;
+                
+                renderSlice();
+            }});
+
+            window.addEventListener('mouseup', function() {{
+                isDragging = false;
+            }});
+            
+            // Start the engine
+            renderSlice();
+        </script>
+        """
         
-        # Display the final interactive image
-        st.image(final_image, caption=f"{selected_series} — Slice {slice_index + 1} of {total_slices}", use_container_width=True)
+        # Display the custom high-speed viewport inside Streamlit
+        st.components.v1.html(html_code, height=620)
         
-        # Patient Data Table
-        st.subheader("📋 Metadata Info")
-        st.text(f"Patient Name: {getattr(dicom_data, 'PatientName', 'Anonymous')}\nModality: {getattr(dicom_data, 'Modality', 'MR')}")
     else:
-        if uploaded_file is not None:
-            st.error("No valid DICOM sequences with scan images found in this ZIP archive.")
+        st.error("No valid medical imaging scans found in this ZIP archive.")
