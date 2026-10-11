@@ -377,6 +377,25 @@ def build_payload_series(s, enhance, params, progress=None):
             enh.append(enhance_frame(frames, k, info, params))
             if progress:
                 progress((k + 1) / len(frames))
+    # Single-frame geometry only; do not invent positions for enhanced multi-frame objects.
+    geometry = []
+    for ds in s["items"]:
+        ipp = _floats(getattr(ds, "ImagePositionPatient", None) or [], 3)
+        iop = _floats(getattr(ds, "ImageOrientationPatient", None) or [], 6)
+        spacing = _floats(getattr(ds, "PixelSpacing", None) or [], 2)
+        ref = str(getattr(ds, "FrameOfReferenceUID", "") or "")
+        study = str(getattr(ds, "StudyInstanceUID", "") or "")
+        valid = (ipp and iop and spacing and ref and study
+                 and int(getattr(ds, "NumberOfFrames", 1) or 1) == 1
+                 and np.isfinite(ipp + iop + spacing).all()
+                 and min(spacing) > 0)
+        if valid:
+            r, c = np.array(iop[:3]), np.array(iop[3:])
+            valid = abs(np.linalg.norm(r)-1) < .001 and abs(np.linalg.norm(c)-1) < .001 and abs(np.dot(r,c)) < .001
+        geometry.append(dict(origin=ipp, row=iop[:3], col=iop[3:], normal=np.cross(r,c).tolist(),
+                             spacing=spacing, ref=ref, study=study) if valid else None)
+    if len(geometry) != len(frames):
+        geometry = [None] * len(frames)
     packed = pack_series(frames, enh)
     pos = [slice_position(d, s["normal"]) for d in s["items"]]
     if len(pos) != len(frames) or any(p is None for p in pos):
@@ -386,7 +405,7 @@ def build_payload_series(s, enhance, params, progress=None):
     icpt = _first(getattr(a, "RescaleIntercept", None), 0.0) or 0.0
     dicom_wl = [wc - ww / 2, wc + ww / 2] if (wc is not None and ww) else None
     return dict(title=s["label"], modality=str(getattr(a, "Modality", "")).upper(), plane=plane_name(s["normal"]), rows=s["rows"], cols=s["cols"],
-                spacing=[float(sp[0]), float(sp[1])],
+                spacing=[float(sp[0]), float(sp[1])], geometry=geometry, sequence=str(getattr(a, "SeriesDescription", "") or getattr(a, "ProtocolName", "") or ""),
                 invert=str(getattr(a, "PhotometricInterpretation", "")).upper() == "MONOCHROME1",
                 pos=pos, hasEnh=bool(enh), snr=round(info["snr"], 1), sigma=info["sigma"],
                 wl=dict(auto=[info["lo"], info["hi"]], dicom=dicom_wl, full=[float(min(f.min() for f in frames)), float(max(f.max() for f in frames))]),
@@ -470,7 +489,7 @@ P.series=Array.from({length:16},(_,i)=>i<Math.min(4,catalog.length)?catalog[i]:n
 const PH=__PANEL_H__, N=16;
 let layoutRows=2,layoutCols=2;
 const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),lo:s.wl.auto[0],hi:s.wl.auto[1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null,ctLike:false,ctContrast:1.25,ctSharp:.25,ctRestore:null});});
-const opt={sync:true,link:false,tool:'wl',overlays:true};
+const opt={sync:true,link:false,tool:'wl',overlays:true,refs:true};
 let hover=0;
 
 const $=(t,a,c)=>{const e=document.createElement(t);if(a)Object.assign(e,a);if(c)c.forEach(x=>e.append(x));return e;};
@@ -494,6 +513,39 @@ const val=(s,u)=>s.off+u*s.scale;
 function toScreen(st,x,y){const L=st.lay;return [L.ox+(x-L.w/2)*L.sc,L.oy+(y-L.h/2)*L.sc*L.asp];}
 function toImage(st,ex,ey){const L=st.lay;return [((ex*L.dpr)-L.ox)/L.sc+L.w/2,(((ey*L.dpr)-L.oy)/(L.sc*L.asp))+L.h/2];}
 function mm(s,m){const dx=(m.x2-m.x1)*s.spacing[1],dy=(m.y2-m.y1)*s.spacing[0];return Math.hypot(dx,dy);}
+
+// DICOM coordinates: x follows the first orientation vector, y the second.
+const dot=(a,b)=>a.reduce((v,x,k)=>v+x*b[k],0);
+const sub=(a,b)=>a.map((x,k)=>x-b[k]);
+function geom(i,k=S[i].idx){return P.series[i]?.geometry?.[k]||null;}
+function compatible(a,b){return !!(a&&b&&a.ref===b.ref&&a.study===b.study);}
+function patientPoint(g,x,y){return g.origin.map((v,k)=>v+x*g.spacing[1]*g.row[k]+y*g.spacing[0]*g.col[k]);}
+function imagePoint(g,p){const d=sub(p,g.origin);return [dot(d,g.row)/g.spacing[1],dot(d,g.col)/g.spacing[0]];}
+function sliceTolerance(series,k){const g=series.geometry?.[k];if(!g)return 0;let gap=Infinity;
+ for(const h of series.geometry){if(!compatible(g,h)||Math.abs(dot(g.normal,h.normal))<.999)continue;const d=Math.abs(dot(sub(g.origin,h.origin),g.normal));if(d>.01)gap=Math.min(gap,d);}
+ return Number.isFinite(gap)?gap/2+.1:.5;
+}
+function nearestSlice(series,source,point,parallel){let best=-1,dist=Infinity;
+ for(let k=0;k<series.pos.length;k++){const g=series.geometry?.[k];if(!compatible(source,g)||(parallel&&Math.abs(dot(source.normal,g.normal))<.999))continue;
+  const d=Math.abs(dot(sub(point,g.origin),g.normal));if(d<dist){best=k;dist=d;}}
+ if(best<0||dist>sliceTolerance(series,best))return -1;
+ const g=series.geometry[best],xy=imagePoint(g,point);
+ if(xy[0]<-.5||xy[1]<-.5||xy[0]>series.cols-.5||xy[1]>series.rows-.5)return -1;
+ return best;
+}
+function referenceSegment(source,target,w,h){if(!compatible(source,target)||Math.abs(dot(source.normal,target.normal))>.999)return null;
+ const A=dot(source.normal,target.row)*target.spacing[1],B=dot(source.normal,target.col)*target.spacing[0],C=dot(source.normal,sub(target.origin,source.origin));
+ const points=[];function add(x,y){if(x>=0&&y>=0&&x<=w-1&&y<=h-1&&!points.some(p=>Math.hypot(p[0]-x,p[1]-y)<.001))points.push([x,y]);}
+ if(Math.abs(B)>1e-9){add(0,-C/B);add(w-1,(-C-A*(w-1))/B);}if(Math.abs(A)>1e-9){add(-C/A,0);add((-C-B*(h-1))/A,h-1);}
+ return points.length>=2?points.slice(0,2):null;
+}
+function drawReferences(i,ctx,dpr){if(!opt.refs||i===hover)return;const seg=referenceSegment(geom(hover),geom(i),P.series[i].cols,P.series[i].rows);if(!seg)return;
+ const a=toScreen(S[i],...seg[0]),b=toScreen(S[i],...seg[1]);ctx.strokeStyle='#fbbf24';ctx.lineWidth=1.2*dpr;ctx.setLineDash([6*dpr,3*dpr]);ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();ctx.setLineDash([]);
+}
+function locatePoint(i,x,y){const source=geom(i);if(!source){readingNotice.textContent='Locate unavailable: this image has no supported DICOM geometry.';return;}
+ const p=patientPoint(source,x,y);let count=0;for(let j=0;j<N;j++){if(j===i||!P.series[j]||S[j].panel.hidden)continue;const k=nearestSlice(P.series[j],source,p,false);if(k>=0){cancelAngle(j);S[j].idx=k;count++;}}
+ readingNotice.textContent=count?'Located point in '+count+' compatible viewport(s).':'No compatible slice covers this point.';drawAll();
+}
 
 // Display-space processing only. No segmentation, synthesis, or changes to source pixels.
 function ctDisplay(gray,w,h,amount){
@@ -547,9 +599,10 @@ async function draw(i){
       else{ctx.fillRect(x1-3*dpr,y1-3*dpr,6*dpr,6*dpr);ctx.fillRect(x2-3*dpr,y2-3*dpr,6*dpr,6*dpr);ctx.fillText(mm(s,m).toFixed(2)+' mm',x2+8*dpr,y2+12*dpr);}
     }
   }
+  drawReferences(i,ctx,dpr);
   ctx.shadowBlur=0;
   if(i===hover)refreshOverlays();
-  st.stat.textContent='Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+' · Loc: '+s.pos[st.idx].toFixed(1)+'mm · W: '+Math.round(st.hi-st.lo)+' L: '+Math.round((st.hi+st.lo)/2)+
+  st.stat.textContent='Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+(geom(i)?' · Loc: '+s.pos[st.idx].toFixed(1)+'mm':' · Position unavailable')+' · W: '+Math.round(st.hi-st.lo)+' L: '+Math.round((st.hi+st.lo)/2)+
     ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(st.ctLike?' [CT-like display · MRI source · experimental]':s.hasEnh?(useEnh?' [ENHANCED]':' [ORIGINAL]'):'');
 }
 
@@ -559,13 +612,16 @@ function setIdx(i,v,fromSync){
   const s=P.series[i],st=S[i];if(!s)return;v=Math.max(0,Math.min(s.pos.length-1,v));if(v===st.idx&&!fromSync)return;
   cancelAngle(i);st.idx=v;draw(i);
   if(opt.sync&&!fromSync){
+    const source=geom(i),point=source?patientPoint(source,(s.cols-1)/2,(s.rows-1)/2):null;
+    let matched=0;
     for(let j=0;j<N;j++){
-      if(j===i||!P.series[j]||S[j].panel.hidden||P.series[j].plane!==s.plane)continue;
-      const pj=P.series[j].pos;let best=0,bd=Infinity;
-      for(let k=0;k<pj.length;k++){const d=Math.abs(pj[k]-s.pos[v]);if(d<bd){bd=d;best=k;}}
-      if(best!==S[j].idx){cancelAngle(j);S[j].idx=best;draw(j);}
+      if(j===i||!P.series[j]||S[j].panel.hidden||!point)continue;
+      const best=nearestSlice(P.series[j],source,point,true);
+      if(best>=0){matched++;cancelAngle(j);S[j].idx=best;}
     }
+    readingNotice.textContent=matched?'Position linked: '+matched+' compatible viewport(s).':'Scroll independent: no compatible geometry match.';
   }
+  drawAll();
 }
 
 function resetView(i){const s=P.series[i],st=S[i];if(!s)return;st.zoom=1;st.px=st.py=0;st.lo=s.wl.auto[0];st.hi=s.wl.auto[1];draw(i);}
@@ -596,13 +652,15 @@ async function roiStats(i,m,idx){
 const bar=document.getElementById('bar');
 const syncG=$('div',{className:'tool-group'});
 syncG.append($('div',{className:'tool-label',textContent:'LINK'}));
-syncG.append(chk('Scroll Linked','sync',true));
+syncG.append(chk('Position linked','sync',true));
+syncG.append(chk('Reference lines','refs',true));
 syncG.append(chk('W/L Linked','link',false));
 bar.append(syncG);
 
 const icons={
  wl:'<circle cx="12" cy="12" r="8"/><path d="M12 4v16M12 4a8 8 0 0 1 0 16Z"/>',
  pan:'<path d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
+ locate:'<path d="M12 2v5M12 17v5M2 12h5M17 12h5"/><circle cx="12" cy="12" r="6"/>',
  zoom:'<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6M7 10h6M10 7v6"/>',
  dist:'<path d="m4 18 14-14 3 3L7 21ZM9 13l2 2M13 9l2 2"/>',
  ellipse:'<ellipse cx="12" cy="12" rx="9" ry="6"/>',
@@ -622,7 +680,7 @@ function toolButton(x){
 const toolG=document.getElementById('tool-rail');
 const toolStatus=$('span',{id:'tool-status',textContent:'Window / level · drag to adjust'});bar.append(toolStatus);
 const annotationInput=$('input',{id:'annotation-text',type:'text',placeholder:'Annotation text',maxLength:160,ariaLabel:'Annotation text'});annotationInput.hidden=true;bar.append(annotationInput);
-const groups=[['VIEW',[{t:'wl',l:'Window / level'},{t:'pan',l:'Pan'},{t:'zoom',l:'Zoom'}]],['MEASURE',[{t:'dist',l:'Distance'},{t:'angle',l:'Angle'}]],['ROI',[{t:'roi',l:'Rectangle ROI'},{t:'ellipse',l:'Ellipse ROI'}]],['NOTES',[{t:'arrow',l:'Arrow annotation'},{t:'text',l:'Text annotation'}]]];
+const groups=[['VIEW',[{t:'wl',l:'Window / level'},{t:'pan',l:'Pan'},{t:'zoom',l:'Zoom'},{t:'locate',l:'Locate point'}]],['MEASURE',[{t:'dist',l:'Distance'},{t:'angle',l:'Angle'}]],['ROI',[{t:'roi',l:'Rectangle ROI'},{t:'ellipse',l:'Ellipse ROI'}]],['NOTES',[{t:'arrow',l:'Arrow annotation'},{t:'text',l:'Text annotation'}]]];
 groups.forEach(([name,items])=>{
  toolG.append($('div',{className:'rail-category',textContent:name}));
  items.forEach(x=>{const button=toolButton(x);button.classList.toggle('on',x.t==='wl');button.setAttribute('aria-pressed',String(x.t==='wl'));
@@ -659,19 +717,41 @@ function setLayout(rows,cols){
  if(hover>=rows*cols)activate(0);requestAnimationFrame(drawAll);
 }
 
+const readingNotice=$('span',{textContent:'Geometry linking requires matching DICOM frame of reference.'});readingNotice.style.cssText='font-size:10px;color:#7296ac';
+const reading=$('details'),readingSummary=$('summary',{textContent:'Reading layouts'});reading.append(readingSummary);bar.append(reading);
+const readingSelect=$('select',{ariaLabel:'Reading preset'}),layoutName=$('input',{type:'text',placeholder:'Layout name',maxLength:40,ariaLabel:'Layout name'});
+layoutName.style.cssText='color:#b7c8da;background:#101923;border:1px solid #2b3b4d;border-radius:4px;padding:6px 9px;width:150px';
+const layoutKey='dicom-reading-layouts-v1';let savedLayouts={};
+function category(s){const d=(s.sequence||'').toUpperCase();if(/ADC/.test(d))return 'ADC';if(/FLAIR/.test(d))return 'FLAIR';if(/STIR|TIRM/.test(d))return 'STIR';if(/DWI|DIFF|TRACE/.test(d))return 'DWI';if(/\bPD\b|PD_|PROTON/.test(d))return 'PD';if(/T1/.test(d))return 'T1';if(/T2/.test(d))return 'T2';return 'Other';}
+function signature(s){return {plane:s.plane,modality:s.modality,category:category(s)};}
+const standardLayouts={Spine:{rows:2,cols:2,slots:[['Sagittal','T2'],['Sagittal','T1'],['Sagittal','STIR'],['Axial','T2']]},Knee:{rows:2,cols:2,slots:[['Sagittal','PD'],['Coronal','PD'],['Axial','PD'],['Sagittal','T1']]},Brain:{rows:2,cols:2,slots:[['Axial','T2'],['Axial','FLAIR'],['Axial','DWI'],['Axial','T1']]}};
+function refreshLayouts(){readingSelect.replaceChildren($('option',{value:'',textContent:'Choose reading layout'}));Object.keys(standardLayouts).forEach(n=>readingSelect.append($('option',{value:'builtin:'+n,textContent:n})));Object.keys(savedLayouts).forEach(n=>readingSelect.append($('option',{value:'saved:'+n,textContent:'Saved · '+n})));}
+function validLayout(v){return v&&Number.isInteger(v.rows)&&Number.isInteger(v.cols)&&v.rows>=1&&v.rows<=4&&v.cols>=1&&v.cols<=4&&Array.isArray(v.slots)&&v.slots.length===v.rows*v.cols&&v.slots.every(s=>s===null||(s&&typeof s.plane==='string'&&typeof s.category==='string'&&typeof s.modality==='string'));}
+try{const data=JSON.parse(localStorage.getItem(layoutKey)||'{}');if(data&&typeof data==='object'&&!Array.isArray(data))for(const [n,v] of Object.entries(data))if(validLayout(v))savedLayouts[n]=v;}catch(e){}
+refreshLayouts();
+const applyReading=$('button',{textContent:'Apply'}),saveReading=$('button',{textContent:'Save current'}),deleteReading=$('button',{textContent:'Delete saved'});
+applyReading.onclick=()=>{const value=readingSelect.value;let spec;if(value.startsWith('builtin:')){const b=standardLayouts[value.slice(8)];if(!b)return;spec={rows:b.rows,cols:b.cols,slots:b.slots.map(([plane,category])=>({plane,category,modality:'MR'}))};}else spec=savedLayouts[value.slice(6)];if(!validLayout(spec))return;
+ const used=new Set();let missing=0;setLayout(spec.rows,spec.cols);
+ spec.slots.forEach((slot,i)=>{if(!slot){S[i].clear();return;}const index=catalog.findIndex((s,k)=>!used.has(k)&&s.plane===slot.plane&&s.modality===slot.modality&&category(s)===slot.category);if(index<0){S[i].clear();missing++;}else{used.add(index);S[i].assign(index);if(slot.display)S[i].applyDisplay(slot.display);}});
+ activate(0);readingNotice.textContent=missing?missing+' unmatched slot(s): drag the desired series into them.':'Reading layout applied. Verify sequence assignments.';drawAll();};
+saveReading.onclick=()=>{const name=layoutName.value.trim();if(!name){readingNotice.textContent='Enter a name to save this layout.';return;}const spec={rows:layoutRows,cols:layoutCols,slots:P.series.slice(0,layoutRows*layoutCols).map((s,i)=>s?{...signature(s),display:S[i].displayConfig()}:null)};
+ if(['__proto__','constructor','prototype'].includes(name))return;const next={...savedLayouts,[name]:spec};try{localStorage.setItem(layoutKey,JSON.stringify(next));savedLayouts=next;refreshLayouts();readingSelect.value='saved:'+name;readingNotice.textContent='Layout saved in this browser. No images or patient identifiers stored.';}catch(e){readingNotice.textContent='Browser storage unavailable; layout could not be saved.';}};
+deleteReading.onclick=()=>{if(!readingSelect.value.startsWith('saved:'))return;const next={...savedLayouts};delete next[readingSelect.value.slice(6)];try{localStorage.setItem(layoutKey,JSON.stringify(next));savedLayouts=next;refreshLayouts();readingNotice.textContent='Saved layout deleted.';}catch(e){readingNotice.textContent='Browser storage unavailable.';}};
+reading.append(readingSelect,applyReading,layoutName,saveReading,deleteReading,readingNotice);
+
 const clr=$('button',{textContent:'Clear all overlays'});clr.onclick=()=>{S.forEach(st=>{st.meas={};st.pendingAngle=null;});drawAll();};bar.append(clr);
 
 if(P.patient){bar.append($('div',{className:'pat-banner',textContent:P.patient}));}
 
 function chk(label,key,init){
   const c=$('input',{type:'checkbox',checked:init,ariaLabel:label});
-  c.onchange=()=>{opt[key]=c.checked;if(key==='overlays')drawAll();};
+  c.onchange=()=>{opt[key]=c.checked;if(key==='overlays'||key==='refs')drawAll();};
   return $('label',null,[c,document.createTextNode(label)]);
 }
 
 const grid=document.getElementById('grid');
 const rail=document.getElementById('series-rail');
-function activate(i){hover=i;refreshOverlays();document.querySelectorAll('.panel').forEach((p,j)=>p.classList.toggle('active-viewport',j===i));rail.querySelectorAll('.series-card').forEach((p,j)=>p.classList.toggle('active',catalog[j]===P.series[i]));}
+function activate(i){const changed=hover!==i;hover=i;refreshOverlays();if(changed)drawAll();document.querySelectorAll('.panel').forEach((p,j)=>p.classList.toggle('active-viewport',j===i));rail.querySelectorAll('.series-card').forEach((p,j)=>p.classList.toggle('active',catalog[j]===P.series[i]));}
 async function thumbnail(i,cv){const s=P.series[i],data=await getFrame(i,Math.floor(s.pos.length/2),false);cv.width=s.cols;cv.height=s.rows;const ctx=cv.getContext('2d'),im=ctx.createImageData(s.cols,s.rows),[lo,hi]=s.wl.auto;for(let k=0;k<data.length;k++){let v=Math.max(0,Math.min(255,255*(val(s,data[k])-lo)/Math.max(1e-9,hi-lo)));if(s.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);}
 P.series.forEach((item,i)=>{
   let s=item||catalog[0];
@@ -710,6 +790,9 @@ P.series.forEach((item,i)=>{
   pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,bRst,bPlay,settings]),cv,stat);
   grid.append(pnl);
   const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
+  st.clear=()=>{leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);};
+  st.displayConfig=()=>({wl:sel.value,inv:st.inv,enh:st.enh,ctLike:st.ctLike,ctContrast:st.ctContrast,ctSharp:st.ctSharp});
+  st.applyDisplay=c=>{sel.value=['auto','dicom','full'].includes(c.wl)&&s.wl[c.wl]?c.wl:'auto';preset(i,sel.value);st.inv=!!c.inv;st.enh=!!c.enh&&s.hasEnh;bInv.className=st.inv?'on':'';bEnh.className=st.enh?'on':'';if(c.ctLike&&s.modality==='MR'){st.ctContrast=Math.max(.7,Math.min(1.8,Number(c.ctContrast)||1.25));st.ctSharp=Math.max(0,Math.min(.5,Number(c.ctSharp)||0));settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;bCT.onclick();}draw(i);};
   st.assign=(index)=>{
     leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
     st.tok++;s=catalog[index];P.series[i]=s;
@@ -739,6 +822,10 @@ P.series.forEach((item,i)=>{
     const tool=e.button===1?'pan':(e.shiftKey?'dist':opt.tool);
     drag={tool,x:e.clientX,y:e.clientY};
     if(!st.lay){drag=null;return;}
+    if(tool==='locate'){
+      const rc=cv.getBoundingClientRect(),[x,y]=toImage(st,e.clientX-rc.left,e.clientY-rc.top);
+      if(x>=0&&y>=0&&x<s.cols&&y<s.rows)locatePoint(i,x,y);drag=null;e.preventDefault();return;
+    }
     if(['dist','roi','ellipse','arrow','text','angle'].includes(tool)){
       const rc=cv.getBoundingClientRect();let [x,y]=toImage(st,e.clientX-rc.left,e.clientY-rc.top);
       if(x<0||y<0||x>s.cols-1||y>s.rows-1){drag=null;return;}
