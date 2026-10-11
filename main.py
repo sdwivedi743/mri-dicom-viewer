@@ -9,20 +9,41 @@ import json
 import base64
 
 # Force wide-screen professional diagnostic layout
-st.set_page_config(page_title="AI Multi-Sequence MRI Workstation", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="AI Glassmorphic MRI Workstation", page_icon="🧠", layout="wide")
 
-# Inject CSS styling safely via st.html to prevent modern Streamlit TypeError crashes
+# Inject premium dark theme with frosted glassmorphism elements
 st.html("""
     <style>
-    body, .stApp { background-color: #080808 !important; color: #e0e0e0 !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important; }
-    [data-testid="stSidebar"] { background-color: #121212 !important; border-right: 1px solid #262626 !important; }
-    .stMetric { background: #161616 !important; padding: 10px !important; border-radius: 6px !important; border: 1px solid #262626 !important; }
-    .stToggle { background: #161616 !important; padding: 10px !important; border-radius: 6px !important; border: 1px solid #262626 !important; margin-bottom: 15px !important; }
-    h1, h2, h3 { color: #00ffcc !important; font-weight: 500 !important; }
+    body, .stApp { 
+        background: linear-gradient(135deg, #060913 0%, #0b1121 100%) !important; 
+        color: #f1f5f9 !important; 
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important; 
+    }
+    [data-testid="stSidebar"] { 
+        background: rgba(15, 23, 42, 0.45) !important; 
+        backdrop-filter: blur(16px) !important; 
+        -webkit-backdrop-filter: blur(16px) !important;
+        border-right: 1px solid rgba(255, 255, 255, 0.08) !important; 
+    }
+    .stMetric, .stToggle, div[data-testid="stFileUploader"] { 
+        background: rgba(255, 255, 255, 0.03) !important; 
+        backdrop-filter: blur(12px) !important; 
+        -webkit-backdrop-filter: blur(12px) !important;
+        padding: 14px !important; 
+        border-radius: 12px !important; 
+        border: 1px solid rgba(255, 255, 255, 0.07) !important; 
+        box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2) !important;
+    }
+    h1, h2, h3 { 
+        background: linear-gradient(90deg, #00f2fe 0%, #4facfe 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: 600 !important; 
+    }
     </style>
 """)
 
-st.title("🧠 AI Multi-Sequence MRI Diagnostics Workstation")
+st.title("🧠 AI Glassmorphic MRI Diagnostics Workstation")
 st.write("Upload a patient `.zip` directory containing multiple MRI sequences.")
 
 # Master Toggles inside the Left Dashboard Sidebar Panel
@@ -32,15 +53,7 @@ ai_mode = st.sidebar.toggle("✨ AI Super-Resolution & Correction Mode", value=F
 uploaded_file = st.sidebar.file_uploader("Upload Patient ZIP Folder", type=["zip"])
 
 def apply_ai_corrections(pixels):
-    """
-    Advanced Medical-Grade Image-Space Enhancement Suite
-    1. Homomorphic Shading Normalization (RF Bias Field Emulation)
-    2. Anisotropic Non-Linear Smoothing (Gibbs Truncation Mitigation)
-    3. Laplacian Unsharp Masking (High-Resolution Boundary Detail Sharpener)
-    """
     img_data = pixels.astype(float)
-    
-    # Avoid log errors with a subtle positive padding offset
     min_val = img_data.min()
     img_data_shifted = img_data - min_val + 1.0
     
@@ -77,7 +90,6 @@ if uploaded_file is not None:
                             dcm = pydicom.dcmread(io.BytesIO(bytes_data), force=True)
                             
                             if hasattr(dcm, 'pixel_array'):
-                                # Automated fallback identification matrix hierarchy
                                 series_name = getattr(dcm, 'SeriesDescription', None)
                                 if not series_name or str(series_name).strip() == "":
                                     series_name = getattr(dcm, 'ProtocolName', None)
@@ -97,7 +109,6 @@ if uploaded_file is not None:
     if len(series_groups) > 0:
         all_series_names = sorted(list(series_groups.keys()))
         
-        # 1. SIDEBAR NAVIGATION HIERARCHY
         st.sidebar.markdown("### 📁 Sequence Directory")
         selected_sequences = st.sidebar.multiselect(
             "Select sequences to display (Up to 6 views):",
@@ -105,15 +116,14 @@ if uploaded_file is not None:
             default=all_series_names[:min(len(all_series_names), 3)]
         )
         
-        # Limit active grid panels to 6 maximum to protect canvas execution pipelines
         active_sequences = selected_sequences[:6]
         num_series = len(active_sequences)
         
         if num_series == 0:
-            st.sidebar.warning("Please check at least one sequence from the directory to display.")
+            st.warning("Please check at least one sequence from the left directory to display the diagnostics console.")
         else:
-            # Safely capture metadata parameters from the primary sequence channel
             p_name, p_id, s_date, s_man = "Anonymous", "N/A", "N/A", "N/A"
+            px_spacing_x, px_spacing_y = 1.0, 1.0
             try:
                 first_key = active_sequences[0]
                 first_slices = series_groups[first_key]
@@ -123,6 +133,10 @@ if uploaded_file is not None:
                     p_id = str(getattr(sample_dcm, 'PatientID', 'N/A'))
                     s_date = str(getattr(sample_dcm, 'StudyDate', 'N/A'))
                     s_man = str(getattr(sample_dcm, 'Manufacturer', 'N/A'))
+                    
+                    spacing = getattr(sample_dcm, 'PixelSpacing', [1.0, 1.0])
+                    px_spacing_x = float(spacing[0])
+                    px_spacing_y = float(spacing[1])
             except Exception:
                 pass
                 
@@ -134,7 +148,6 @@ if uploaded_file is not None:
 
             grid_data = []
             
-            # Populate rendering channels exclusively for checked sequence layers
             for i in range(num_series):
                 s_name = active_sequences[i]
                 sorted_slices = sorted(series_groups[s_name], key=lambda x: x[0])
@@ -150,10 +163,9 @@ if uploaded_file is not None:
                     
                     try:
                         raw_w = getattr(dcm, 'WindowWidth', pixels.max() - pixels.min())
-                        dw = float(raw_w if not isinstance(raw_w, (list, pydicom.multival.MultiValue)) else raw_w[0])
-                        
+                        dw = float(raw_w[0] if isinstance(raw_w, (list, pydicom.multival.MultiValue)) else raw_w)
                         raw_l = getattr(dcm, 'WindowCenter', (pixels.max() + pixels.min()) / 2)
-                        dl = float(raw_l if not isinstance(raw_l, (list, pydicom.multival.MultiValue)) else raw_l[0])
+                        dl = float(raw_l[0] if isinstance(raw_l, (list, pydicom.multival.MultiValue)) else raw_l)
                     except Exception:
                         dw = float(pixels.max() - pixels.min())
                         dl = float((pixels.max() + pixels.min()) / 2)
@@ -183,42 +195,45 @@ if uploaded_file is not None:
 
             workstation_json = json.dumps(grid_data)
             
-            # Calculate fluid screen layout grids dynamically
             cols_count = 3 if num_series >= 3 else num_series
             rows_count = 2 if num_series > 3 else 1
-            window_height = 440 * rows_count + 80
+            window_height = 460 * rows_count + 120
 
             panels_html = ""
             for idx in range(num_series):
                 panels_html += f"""
-                <div id="panel_{idx}" style="background: #0b0b0b; border: 1px solid #222; border-radius: 6px; padding: 10px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div id="title_{idx}" style="color: #00ffcc; font-weight: 500; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px;">Loading Viewport...</div>
-                    <canvas id="canvas_{idx}" style="background: #000; max-width: 100%; width: 100%; height: auto; border: 1px solid #1a1a1a; cursor: crosshair; border-radius: 4px;"></canvas>
-                    <div id="status_{idx}" style="color: #888; font-size: 11px; margin-top: 6px; font-family: monospace;">Slice: --</div>
+                <div id="panel_{idx}" style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 12px; text-align: center; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.21);">
+                    <div id="title_{idx}" style="color: #00f2fe; font-weight: bold; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Loading Viewport...</div>
+                    <canvas id="canvas_{idx}" style="background: #000; max-width: 100%; width: 100%; height: auto; border: 1px solid rgba(255,255,255,0.05); cursor: crosshair; border-radius: 8px;"></canvas>
+                    <div id="status_{idx}" style="color: #94a3b8; font-size: 11px; margin-top: 8px; font-family: monospace;">Slice: --</div>
                 </div>
                 """
 
-            # Complete Interactive Canvas Workspace Integration Engine
             html_code = """
-            <div style="background-color: #050505; padding: 10px; border-radius: 8px; color: #ffffff; font-family: -apple-system, sans-serif; font-size:12px;">
-                <div style="background: #111; padding: 10px; margin-bottom: 15px; border-radius: 6px; text-align: center; border: 1px solid #222; color: #e0e0e0; font-size:13px;">
-                    🖥️ <b>Diagnostic Console Ready</b> | Hover over viewport | <b>Scroll Wheel:</b> Flip Slices | <b>Left-Click & Drag:</b> Dynamic Windowing (Contrast/Brightness)
+            <div style="background: transparent; padding: 5px; font-family: -apple-system, sans-serif; color: #fff;">
+                <div style="background: rgba(255, 255, 255, 0.04); padding: 12px; margin-bottom: 20px; border-radius: 12px; text-align: center; border: 1px solid rgba(255, 255, 255, 0.08); color: #cbd5e1; font-size:13px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);">
+                    ⚙️ <b>PACS Spatial Console Active</b> | <b>Scroll:</b> Flip Slices | <b>Left-Click & Drag:</b> Independent Contrast | 📏 <b>Shift + Click & Drag:</b> Measurement Caliper
                 </div>
-                <div style="display: grid; grid-template-columns: repeat(""" + str(cols_count) + """, 1fr); gap: 15px;">
+                <div style="display: grid; grid-template-columns: repeat(""" + str(cols_count) + """, 1fr); gap: 20px;">
                     """ + panels_html + """
                 </div>
             </div>
             <script>
                 const workstationData = """ + workstation_json + """;
                 const numPanels = workstationData.length;
+                const pSpacingX = """ + str(px_spacing_x) + """;
+                const pSpacingY = """ + str(px_spacing_y) + """;
                 
                 let currentIndices = new Array(numPanels).fill(0);
                 let windowWidths = workstationData.map(p => p.slices && p.slices.length > 0 ? p.slices[0].default_w : 1000);
                 let windowLevels = workstationData.map(p => p.slices && p.slices.length > 0 ? p.slices[0].default_l : 500);
                 
                 let isDragging = false;
+                let isCaliperActive = false;
                 let activePanelIdx = null;
                 let startX, startY;
+                let caliperStartX, caliperStartY;
+                let caliperEndX, caliperEndY;
 
                 function renderPanel(idx) {
                     const panel = workstationData[idx];
@@ -240,8 +255,36 @@ if uploaded_file is not None:
                         let cPct = (255 / (windowWidths[idx] || 1)) * 100;
                         
                         ctx.clearRect(0, 0, canvas.width, canvas.height);
+                        ctx.save();
                         ctx.filter = "brightness(" + (bPct + 50) + "%) contrast(" + cPct + "%)";
                         ctx.drawImage(imgObj, 0, 0);
+                        ctx.restore();
+                        
+                        // DRAW MEASUREMENT CALIPER IF ACTIVE
+                        if (isCaliperActive && activePanelIdx === idx) {
+                            ctx.strokeStyle = '#00ffcc';
+                            ctx.lineWidth = 2;
+                            ctx.beginPath();
+                            ctx.moveTo(caliperStartX, caliperStartY);
+                            ctx.lineTo(caliperEndX, caliperEndY);
+                            ctx.stroke();
+                            
+                            // Draw end ticks
+                            ctx.fillStyle = '#00ffcc';
+                            ctx.fillRect(caliperStartX - 3, caliperStartY - 3, 6, 6);
+                            ctx.fillRect(caliperEndX - 3, caliperEndY - 3, 6, 6);
+                            
+                            // Calculate actual spatial distance
+                            let dxMm = (caliperEndX - caliperStartX) * pSpacingX;
+                            let dyMm = (caliperEndY - caliperStartY) * pSpacingY;
+                            let distMm = Math.sqrt(dxMm * dxMm + dyMm * dyMm);
+                            
+                            ctx.font = 'bold 14px monospace';
+                            ctx.fillStyle = '#00ffcc';
+                            ctx.shadowColor = 'black';
+                            ctx.shadowBlur = 4;
+                            ctx.fillText(distMm.toFixed(2) + " mm", caliperEndX + 10, caliperEndY + 10);
+                        }
                         
                         document.getElementById('status_' + idx).innerText = 
                             "Slice: " + (sliceIdx + 1) + "/" + panel.total_slices + " | W: " + Math.round(windowWidths[idx]) + " L: " + Math.round(windowLevels[idx]);
@@ -263,33 +306,56 @@ if uploaded_file is not None:
                     }, { passive: false });
                     
                     canvas.addEventListener('mousedown', function(e) {
-                        isDragging = true;
+                        const rect = canvas.getBoundingClientRect();
+                        const canvasX = (e.clientX - rect.left) * (canvas.width / rect.width);
+                        const canvasY = (e.clientY - rect.top) * (canvas.height / rect.height);
+                        
                         activePanelIdx = panelIdx;
                         startX = e.clientX;
                         startY = e.clientY;
+                        
+                        if (e.shiftKey) {
+                            isCaliperActive = true;
+                            caliperStartX = canvasX;
+                            caliperStartY = canvasY;
+                            caliperEndX = canvasX;
+                            caliperEndY = canvasY;
+                        } else {
+                            isDragging = true;
+                            isCaliperActive = false;
+                        }
                     });
-                    
-                    renderPanel(i);
                 }
 
                 window.addEventListener('mousemove', function(e) {
-                    if (!isDragging || activePanelIdx === null) return;
+                    if (activePanelIdx === null) return;
                     
-                    let deltaX = e.clientX - startX;
-                    let deltaY = e.clientY - startY;
-                    
-                    startX = e.clientX;
-                    startY = e.clientY;
+                    const canvas = document.getElementById('canvas_' + activePanelIdx);
+                    const rect = canvas.getBoundingClientRect();
+                    const canvasX = (e.clientX - rect.left) * (canvas.width / rect.width);
+                    const canvasY = (e.clientY - rect.top) * (canvas.height / rect.height);
 
-                    windowWidths[activePanelIdx] += deltaX * 3;
-                    windowLevels[activePanelIdx] -= deltaY * 3;
-                    
-                    renderPanel(activePanelIdx);
+                    if (isCaliperActive) {
+                        caliperEndX = canvasX;
+                        caliperEndY = canvasY;
+                        renderPanel(activePanelIdx);
+                    } else if (isDragging) {
+                        let deltaX = e.clientX - startX;
+                        let deltaY = e.clientY - startY;
+                        
+                        startX = e.clientX;
+                        startY = e.clientY;
+
+                        windowWidths[activePanelIdx] += deltaX * 3;
+                        windowLevels[activePanelIdx] -= deltaY * 3;
+                        
+                        renderPanel(activePanelIdx);
+                    }
                 });
 
                 window.addEventListener('mouseup', function() {
                     isDragging = false;
-                    activePanelIdx = null;
+                    // Keep caliper trace visible until next click
                 });
             </script>
             """
