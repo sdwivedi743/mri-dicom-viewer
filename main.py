@@ -21,6 +21,11 @@ ai_mode = st.sidebar.toggle("✨ AI Super-Resolution & Correction Mode", value=F
 uploaded_file = st.sidebar.file_uploader("Upload Patient ZIP Folder", type=["zip"])
 
 def apply_ai_corrections(pixels):
+    """
+    Advanced Image-Space Post-Processing Suite
+    1. Homomorphic Gaussian High-Pass Filter for Bias Field Intensity Correction
+    2. Edge-Preserving structural smoothing to suppress noise and Gibbs ringing
+    """
     img_data = pixels.astype(float)
     min_val = img_data.min()
     img_data_shifted = img_data - min_val + 1.0
@@ -78,15 +83,14 @@ if uploaded_file is not None:
         
         p_name, p_id, s_date, s_man = "Anonymous", "N/A", "N/A", "N/A"
         try:
-            if len(all_series_names) > 0:
-                first_key = all_series_names[0]
-                first_slices = series_groups[first_key]
-                if len(first_slices) > 0:
-                    _, sample_dcm = first_slices[0]
-                    p_name = str(getattr(sample_dcm, 'PatientName', 'Anonymous'))
-                    p_id = str(getattr(sample_dcm, 'PatientID', 'N/A'))
-                    s_date = str(getattr(sample_dcm, 'StudyDate', 'N/A'))
-                    s_man = str(getattr(sample_dcm, 'Manufacturer', 'N/A'))
+            first_key = all_series_names[0]
+            first_slices = series_groups[first_key]
+            if len(first_slices) > 0:
+                _, sample_dcm = first_slices[0]
+                p_name = str(getattr(sample_dcm, 'PatientName', 'Anonymous'))
+                p_id = str(getattr(sample_dcm, 'PatientID', 'N/A'))
+                s_date = str(getattr(sample_dcm, 'StudyDate', 'N/A'))
+                s_man = str(getattr(sample_dcm, 'Manufacturer', 'N/A'))
         except Exception:
             pass
             
@@ -113,10 +117,10 @@ if uploaded_file is not None:
                 
                 try:
                     raw_w = getattr(dcm, 'WindowWidth', pixels.max() - pixels.min())
-                    dw = float(raw_w[0] if isinstance(raw_w, (list, tuple, np.ndarray)) else raw_w)
+                    dw = float(raw_w if isinstance(raw_w, (list, pydicom.multival.MultiValue)) else raw_w)
                     
                     raw_l = getattr(dcm, 'WindowCenter', (pixels.max() + pixels.min()) / 2)
-                    dl = float(raw_l[0] if isinstance(raw_l, (list, tuple, np.ndarray)) else raw_l)
+                    dl = float(raw_l if isinstance(raw_l, (list, pydicom.multival.MultiValue)) else raw_l)
                 except Exception:
                     dw = float(pixels.max() - pixels.min())
                     dl = float((pixels.max() + pixels.min()) / 2)
@@ -152,13 +156,13 @@ if uploaded_file is not None:
 
         panels_html = ""
         for idx in range(num_series):
-            panels_html += f'''
+            panels_html += f"""
             <div id="panel_{idx}" style="background: #000; border: 1px solid #333; border-radius: 4px; padding: 6px; text-align: center;">
                 <div id="title_{idx}" style="color: #aaa; font-weight: bold; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Loading Viewport...</div>
                 <canvas id="canvas_{idx}" style="background: #000; max-width: 100%; width: 100%; height: auto; border: 1px solid #111; cursor: crosshair;"></canvas>
                 <div id="status_{idx}" style="color: #666; font-size: 11px; margin-top: 4px;">Slice: --</div>
             </div>
-            '''
+            """
 
         html_code = """
         <div style="background-color: #050505; padding: 10px; border-radius: 8px; color: #ffffff; font-family: monospace; font-size:12px;">
@@ -255,5 +259,5 @@ if uploaded_file is not None:
         </script>
         """
         st.components.v1.html(html_code, height=window_height)
-    else:
-        st.error("No valid multi-sequence folders containing imaging tensors discovered inside this ZIP.")
+else:
+    st.error("No valid multi-sequence folders containing imaging tensors discovered inside this ZIP.")
