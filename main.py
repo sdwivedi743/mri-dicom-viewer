@@ -9,14 +9,17 @@ import base64
 
 st.set_page_config(page_title="Pro MRI DICOM Viewer", page_icon="🧠", layout="wide")
 
-# Dark medical theme styling
-st.markdown("""
+# FIX: Explicitly name the 'body' argument to stop the TypeError crash
+st.markdown(
+    body="""
     <style>
     .reportview-container { background: #111111; color: white; }
     .sidebar .sidebar-content { background: #1e1e1e; }
     div.stButton > button:first-child { width: 100%; }
     </style>
-""", unsafe_allowed_html=True)
+    """, 
+    unsafe_allowed_html=True
+)
 
 st.title("🧠 Pro Medical MRI DICOM Viewer")
 
@@ -61,8 +64,8 @@ if uploaded_file is not None:
         
         st.sidebar.metric(label="Total Slices", value=total_slices)
         
-        # FIX: Extract metadata from the FIRST slice properly using [0][1]
-        sample_dcm = current_slices[0][1]
+        # Extract metadata from the FIRST slice properly
+        _, sample_dcm = current_slices[0]
         st.sidebar.subheader("📋 Patient Metadata")
         st.sidebar.write(f"**Name:** {getattr(sample_dcm, 'PatientName', 'Anonymous')}")
         st.sidebar.write(f"**ID:** {getattr(sample_dcm, 'PatientID', 'N/A')}")
@@ -102,7 +105,7 @@ if uploaded_file is not None:
         html_code = f"""
         <div style="background-color: #000; padding: 15px; border-radius: 8px; color: #fff; font-family: sans-serif; text-align: center;">
             <p style="margin: 0 0 10px 0; font-size: 14px; color: #aaa;">
-                外️ <b>Mouse Wheel:</b> Scroll Slices | ↕️ <b>Left Click & Drag Vertically:</b> Brightness | ↔️ <b>Horizontal Drag:</b> Contrast
+                🖱️ <b>Mouse Wheel:</b> Scroll Slices | ↕️ <b>Left Click & Drag Vertically:</b> Brightness | ↔️ <b>Horizontal Drag:</b> Contrast
             </p>
             <canvas id="dicomCanvas" style="border: 2px solid #333; max-width: 100%; background: #000; cursor: contrast;"></canvas>
             <div id="statusInfo" style="margin-top: 10px; font-weight: bold; font-size: 15px; color: #4CAF50;">Slice: 1 / {total_slices}</div>
