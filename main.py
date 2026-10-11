@@ -397,7 +397,7 @@ def build_payload_series(s, enhance, params, progress=None):
 # ----------------------------------------------------------------------------------------------------------------
 VIEWER_HTML = r"""
 <style>
-*{box-sizing:border-box}body{margin:0;background:#080c12;color:#d4deea;font:12px -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:#080c12;color:#d4deea;font:12px -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}
 button,select{font:inherit;cursor:pointer;color:#b7c8da;background:#16212e;border:1px solid #2b3b4d;border-radius:4px;padding:6px 9px}
 button:hover,select:hover{color:#eef8ff;background:#23384b;border-color:#518caf}
 button:focus-visible,select:focus-visible{outline:2px solid #63c5e7;outline-offset:2px}
@@ -409,25 +409,25 @@ button:disabled{opacity:.4;cursor:default}input{accent-color:#63c5e7}
 label{display:flex;align-items:center;gap:5px;font-size:11px;padding:6px 4px;cursor:pointer}
 .tool-button{display:inline-flex;align-items:center;gap:6px;background:transparent;border-color:transparent;padding:7px 9px}
 .tool-button svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
-.workspace{display:grid;grid-template-columns:146px 54px minmax(0,1fr);border:1px solid #26313f;border-top:0;min-height:640px}
-#series-rail{background:#101720;border-right:1px solid #26313f;padding:12px 9px}
+.workspace{display:grid;grid-template-columns:146px 54px minmax(0,1fr);border:1px solid #26313f;border-top:0;min-height:0;flex:1;overflow:hidden}
+#series-rail{overflow-y:auto;min-height:0;background:#101720;border-right:1px solid #26313f;padding:12px 9px}
 .rail-heading{font-size:9px;letter-spacing:1.5px;color:#70859c;margin:0 0 14px 3px}
 .series-card{display:block;width:100%;padding:6px;text-align:left;margin-bottom:10px;background:#121c27;border-color:#29394b}
 .series-card.active{border-color:#55bcdf;background:#172d3d}
 .series-card canvas{height:76px;width:100%;background:#000;border-radius:2px;cursor:pointer}
 .series-card .name{display:block;font-size:11px;margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .series-card .meta{font-size:9px;color:#70859c;display:block;margin-top:4px}
-#grid{display:grid;grid-template-columns:repeat(__COLS__,minmax(0,1fr));gap:2px;padding:2px;background:#080c12;align-content:stretch}
-.panel{position:relative;min-width:0;background:#000;border:1px solid #26313f;display:flex;flex-direction:column;overflow:hidden}
+#grid{display:grid;grid-template-columns:repeat(__COLS__,minmax(0,1fr));gap:2px;padding:2px;background:#080c12;align-content:stretch;min-height:0;overflow:hidden;grid-template-rows:repeat(2,minmax(0,1fr))}
+.panel{position:relative;min-width:0;min-height:0;background:#000;border:1px solid #26313f;display:flex;flex-direction:column;overflow:hidden}
 .panel.active-viewport{border-color:#55bcdf}
 .hd{display:flex;flex-wrap:wrap;gap:5px;align-items:center;background:#101821;padding:7px 9px;border-bottom:1px solid #26313f}
 .ttl{flex:1 1 100%;font-size:11px;color:#cbdcea;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:3px}
 .hd button,.hd select{font-size:10px;padding:4px 6px;background:#15212d}
-.panel canvas{width:100%;height:__PANEL_H__px;min-height:260px;flex:1;display:block;background:#000;cursor:crosshair;touch-action:none}
+.panel canvas{width:100%;height:0;min-height:0;flex:1;display:block;background:#000;cursor:crosshair;touch-action:none}
 .st{padding:8px 9px;background:#0c131c;color:#7992a9;font:10px ui-monospace,Consolas,monospace;line-height:1.6;min-height:42px;border-top:1px solid #26313f}
 .pat-banner{width:100%;padding:7px 10px;background:#172634;color:#c0d5e7;border-top:1px solid #314255;font-size:11px}
 .workspace-footer{display:flex;justify-content:space-between;gap:12px;color:#688097;font-size:10px;background:#111923;padding:10px 12px;border:1px solid #26313f;border-top:0}
-.empty-canvas{position:relative;min-height:320px;background:radial-gradient(ellipse at 50% 52%,#101923 0%,#05090e 60%);display:grid;place-items:center}
+.empty-canvas{position:relative;min-height:0;flex:1;background:radial-gradient(ellipse at 50% 52%,#101923 0%,#05090e 60%);display:grid;place-items:center}
 .empty-canvas .corner{position:absolute;top:14px;left:14px;color:#405268;font:10px ui-monospace,monospace}
 .empty-canvas .center{text-align:center;color:#50667d;font-size:11px;line-height:1.8}
 .empty-canvas .center svg{width:39px;height:39px;display:block;margin:0 auto 10px;stroke:#354c61;fill:none;stroke-width:1}
@@ -435,9 +435,9 @@ label{display:flex;align-items:center;gap:5px;font-size:11px;padding:6px 4px;cur
 .empty-canvas .bottom{position:absolute;bottom:14px;left:14px;font:9px ui-monospace,monospace;color:#35485c}
 .rail-empty{height:85px;border:1px dashed #2c4054;display:grid;place-items:center;color:#4f667d;font-size:25px;margin-bottom:10px}
 .rail-hint{color:#70859c;font-size:10px;line-height:1.7;padding:5px}
-@media(max-width:1000px){.workspace{grid-template-columns:110px 54px minmax(0,1fr)}#grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tool-label,.brand-tag{display:none}}
-@media(max-width:600px){.workspace{grid-template-columns:44px minmax(0,1fr)}#series-rail{display:none}#grid{grid-template-columns:1fr}.tool-button{padding:6px}.tool-button span{display:none}.workspace-footer{flex-wrap:wrap}}
-#tool-rail{background:#101720;border-right:1px solid #26313f;padding:7px 5px;display:flex;flex-direction:column;gap:2px;align-items:center}
+@media(max-width:1000px){.workspace{grid-template-columns:110px 54px minmax(0,1fr)}.tool-label,.brand-tag{display:none}}
+@media(max-width:600px){.workspace{grid-template-columns:44px minmax(0,1fr)}#series-rail{display:none}.tool-button{padding:6px}.tool-button span{display:none}.workspace-footer{flex-wrap:wrap}}
+#tool-rail{overflow-y:auto;min-height:0;background:#101720;border-right:1px solid #26313f;padding:7px 5px;display:flex;flex-direction:column;gap:2px;align-items:center}
 #tool-rail .tool-button{width:40px;height:30px;justify-content:center;padding:7px;flex-shrink:0}
 #tool-rail .tool-button span{display:none}
 .rail-separator{width:30px;border-top:1px solid #26313f;margin:5px 0}
@@ -446,6 +446,13 @@ label{display:flex;align-items:center;gap:5px;font-size:11px;padding:6px 4px;cur
 #annotation-text{width:140px;background:#16212e;border:1px solid #314255;border-radius:4px;color:#d4deea;padding:6px;font:11px inherit}
 #overlay-list{max-width:155px}
 #bar .overlay-controls{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+html,body{height:100%;overflow:hidden}body{display:flex;flex-direction:column}
+#bar,.workspace-footer{flex-shrink:0}#bar{max-height:110px;overflow:auto}
+.drop-hint{position:absolute;inset:0;display:grid;place-items:center;color:#688097;font-size:11px;text-align:center;pointer-events:none;background:#080c12}
+.panel.drop-target{outline:2px solid #55bcdf;outline-offset:-3px}
+.layout-picker{position:relative}.layout-menu{position:fixed;z-index:1000;background:#15212e;border:1px solid #435970;padding:12px;border-radius:5px;box-shadow:0 8px 24px #0009}
+.layout-matrix{display:grid;grid-template-columns:repeat(4,25px);gap:4px;margin-top:8px}.layout-cell{width:25px;height:25px;padding:0;background:#101720;border:1px solid #435970}.layout-cell.preview{background:#22546f;border-color:#55bcdf}
+#grid.dense .hd{padding:3px}.dense .hd button,.dense .hd select{padding:2px;font-size:9px}.dense .ttl{font-size:9px}.dense .st{padding:3px;font-size:8px;min-height:0}.dense .hd{gap:2px}
 </style>
 
 <div id="bar">
@@ -455,9 +462,14 @@ label{display:flex;align-items:center;gap:5px;font-size:11px;padding:6px 4px;cur
 <div class="workspace-footer"><span>Scroll to browse &nbsp; · &nbsp; Ctrl / Cmd + scroll to zoom &nbsp; · &nbsp; Middle drag to pan</span><span>Space: cine &nbsp; · &nbsp; R: reset</span></div>
 
 <script>
+function fitHost(){try{const host=window.frameElement;if(host){host.style.height=Math.max(300,window.parent.innerHeight-host.getBoundingClientRect().top-12)+'px';}}catch(e){}}
+fitHost();try{window.parent.addEventListener('resize',fitHost);}catch(e){}
 const P=__PAYLOAD__;
-const PH=__PANEL_H__, N=P.series.length;
-const S=P.series.map(s=>({idx:Math.floor(s.pos.length/2),lo:s.wl.auto[0],hi:s.wl.auto[1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null}));
+const catalog=P.series;
+P.series=Array.from({length:16},(_,i)=>i<Math.min(4,catalog.length)?catalog[i]:null);
+const PH=__PANEL_H__, N=16;
+let layoutRows=2,layoutCols=2;
+const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),lo:s.wl.auto[0],hi:s.wl.auto[1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null});});
 const opt={sync:true,link:false,tool:'wl',overlays:true};
 let hover=0;
 
@@ -470,10 +482,10 @@ async function inflate(b64){
 }
 
 async function getFrame(i,idx,enh){
-  const s=P.series[i],st=S[i],key=idx+(enh?'e':'o');
-  if(st.cache.has(key)){const v=st.cache.get(key);st.cache.delete(key);st.cache.set(key,v);return v;}
+  const s=P.series[i],st=S[i],key=idx+(enh?'e':'o'),cache=st.cache;
+  if(cache.has(key)){const v=cache.get(key);cache.delete(key);cache.set(key,v);return v;}
   const it=s.items[idx],arr=await inflate(enh&&it.e?it.e:it.o);
-  st.cache.set(key,arr);if(st.cache.size>40)st.cache.delete(st.cache.keys().next().value);
+  cache.set(key,arr);if(cache.size>40)cache.delete(cache.keys().next().value);
   return arr;
 }
 
@@ -484,7 +496,7 @@ function toImage(st,ex,ey){const L=st.lay;return [((ex*L.dpr)-L.ox)/L.sc+L.w/2,(
 function mm(s,m){const dx=(m.x2-m.x1)*s.spacing[1],dy=(m.y2-m.y1)*s.spacing[0];return Math.hypot(dx,dy);}
 
 async function draw(i){
-  const s=P.series[i],st=S[i],tok=++st.tok;
+  const s=P.series[i],st=S[i];if(!s||st.panel.hidden)return;const tok=++st.tok;
   const useEnh=st.enh&&s.hasEnh,data=await getFrame(i,st.idx,useEnh);
   if(tok!==st.tok)return;
   const w=s.cols,h=s.rows,oc=st.oc||(st.oc=$('canvas'));oc.width=w;oc.height=h;
@@ -527,11 +539,11 @@ async function draw(i){
 const drawAll=()=>{for(let i=0;i<N;i++)draw(i);};
 
 function setIdx(i,v,fromSync){
-  const s=P.series[i],st=S[i];v=Math.max(0,Math.min(s.pos.length-1,v));if(v===st.idx&&!fromSync)return;
+  const s=P.series[i],st=S[i];if(!s)return;v=Math.max(0,Math.min(s.pos.length-1,v));if(v===st.idx&&!fromSync)return;
   cancelAngle(i);st.idx=v;draw(i);
   if(opt.sync&&!fromSync){
     for(let j=0;j<N;j++){
-      if(j===i||P.series[j].plane!==s.plane)continue;
+      if(j===i||!P.series[j]||S[j].panel.hidden||P.series[j].plane!==s.plane)continue;
       const pj=P.series[j].pos;let best=0,bd=Infinity;
       for(let k=0;k<pj.length;k++){const d=Math.abs(pj[k]-s.pos[v]);if(d<bd){bd=d;best=k;}}
       if(best!==S[j].idx){cancelAngle(j);S[j].idx=best;draw(j);}
@@ -539,7 +551,7 @@ function setIdx(i,v,fromSync){
   }
 }
 
-function resetView(i){const s=P.series[i],st=S[i];st.zoom=1;st.px=st.py=0;st.lo=s.wl.auto[0];st.hi=s.wl.auto[1];draw(i);}
+function resetView(i){const s=P.series[i],st=S[i];if(!s)return;st.zoom=1;st.px=st.py=0;st.lo=s.wl.auto[0];st.hi=s.wl.auto[1];draw(i);}
 function preset(i,name){const s=P.series[i],st=S[i],w=s.wl[name]||s.wl.auto;st.lo=w[0];st.hi=w[1];draw(i);}
 
 function angleDegrees(s,m){
@@ -612,10 +624,23 @@ overlayList.onchange=()=>{remove.hidden=!overlayList.value;const m=(S[hover].mea
 overlayControls.append(overlayList,remove,edit);bar.append(overlayControls);
 bar.append(chk('Show overlays','overlays',true));
 let nextOverlayId=1;
-const layout=$('select',{ariaLabel:'Viewport layout',title:'Viewport layout'});
-[['auto','Layout: Auto'],['1','Layout: 1 column'],['2','Layout: 2 columns'],['3','Layout: 3 columns']].forEach(([value,textContent])=>layout.append($('option',{value,textContent})));
-layout.onchange=()=>{grid.style.gridTemplateColumns='repeat('+(layout.value==='auto'?__COLS__:layout.value)+',minmax(0,1fr))';requestAnimationFrame(drawAll);};
-bar.append(layout);
+const layoutPicker=$('div',{className:'layout-picker'}),layout=$('button',{textContent:'Layout: 2 × 2',ariaLabel:'Viewport layout'});
+const layoutMenu=$('div',{className:'layout-menu',hidden:true}),layoutCaption=$('div',{textContent:'2 rows × 2 columns'}),matrix=$('div',{className:'layout-matrix'});
+const layoutCells=[];
+for(let r=1;r<=4;r++)for(let c=1;c<=4;c++){
+ const cell=$('button',{className:'layout-cell',title:r+' rows × '+c+' columns',ariaLabel:r+' rows by '+c+' columns'});
+ cell.onmouseenter=()=>{layoutCaption.textContent=r+' rows × '+c+' columns';layoutCells.forEach(({button,row,col})=>button.classList.toggle('preview',row<=r&&col<=c));};
+ cell.onclick=()=>{setLayout(r,c);layoutMenu.hidden=true;};matrix.append(cell);layoutCells.push({button:cell,row:r,col:c});
+}
+layoutMenu.append(layoutCaption,matrix);layoutPicker.append(layout);bar.append(layoutPicker);document.body.append(layoutMenu);
+layout.onclick=()=>{layoutMenu.hidden=!layoutMenu.hidden;const b=layout.getBoundingClientRect();layoutMenu.style.top=(b.bottom+4)+'px';layoutMenu.style.left=Math.min(b.left,window.innerWidth-150)+'px';};
+document.addEventListener('pointerdown',e=>{if(!layoutMenu.contains(e.target)&&e.target!==layout)layoutMenu.hidden=true;});
+function setLayout(rows,cols){
+ layoutRows=rows;layoutCols=cols;layout.textContent='Layout: '+rows+' × '+cols;
+ grid.style.gridTemplateColumns='repeat('+cols+',minmax(0,1fr))';grid.style.gridTemplateRows='repeat('+rows+',minmax(0,1fr))';grid.classList.toggle('dense',rows>=3||cols>=3);
+ S.forEach((st,i)=>{st.panel.hidden=i>=rows*cols;if(st.panel.hidden&&st.play){clearInterval(st.play);st.play=null;}});
+ if(hover>=rows*cols)activate(0);requestAnimationFrame(drawAll);
+}
 
 const clr=$('button',{textContent:'Clear all overlays'});clr.onclick=()=>{S.forEach(st=>{st.meas={};st.pendingAngle=null;});drawAll();};bar.append(clr);
 
@@ -629,12 +654,13 @@ function chk(label,key,init){
 
 const grid=document.getElementById('grid');
 const rail=document.getElementById('series-rail');
-function activate(i){hover=i;refreshOverlays();document.querySelectorAll('.panel').forEach((p,j)=>p.classList.toggle('active-viewport',j===i));rail.querySelectorAll('.series-card').forEach((p,j)=>p.classList.toggle('active',j===i));}
+function activate(i){hover=i;refreshOverlays();document.querySelectorAll('.panel').forEach((p,j)=>p.classList.toggle('active-viewport',j===i));rail.querySelectorAll('.series-card').forEach((p,j)=>p.classList.toggle('active',catalog[j]===P.series[i]));}
 async function thumbnail(i,cv){const s=P.series[i],data=await getFrame(i,Math.floor(s.pos.length/2),false);cv.width=s.cols;cv.height=s.rows;const ctx=cv.getContext('2d'),im=ctx.createImageData(s.cols,s.rows),[lo,hi]=s.wl.auto;for(let k=0;k<data.length;k++){let v=Math.max(0,Math.min(255,255*(val(s,data[k])-lo)/Math.max(1e-9,hi-lo)));if(s.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);}
-P.series.forEach((s,i)=>{
+P.series.forEach((item,i)=>{
+  let s=item||catalog[0];
   const st=S[i],cv=$('canvas'),stat=$('div',{className:'st'}),pnl=$('div',{className:'panel'});
   if(i===0) pnl.classList.add('active-viewport');
-  st.cv=cv;st.stat=stat;
+  st.cv=cv;st.stat=stat;st.panel=pnl;pnl.hidden=i>=4;
   
   const sel=$('select');
   ['auto','dicom','full'].forEach(n=>{
@@ -655,15 +681,25 @@ P.series.forEach((s,i)=>{
   st.togEnh=()=>bEnh.onclick();st.togInv=()=>bInv.onclick();st.togPlay=()=>bPlay.onclick();
   pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bRst,bPlay]),cv,stat);
   grid.append(pnl);
-  const thumb=$('canvas'),card=$('button',{className:'series-card'+(i===0?' active':''),title:s.title,ariaLabel:'Focus '+s.title});
-  card.append(thumb,$('span',{className:'name',textContent:s.title}),$('span',{className:'meta',textContent:s.plane+' · '+s.pos.length+' images'}));
-  card.onclick=()=>{activate(i);pnl.scrollIntoView({behavior:'smooth',block:'nearest'});};rail.append(card);thumbnail(i,thumb);
-  
+  const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
+  st.assign=(index)=>{
+    cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
+    st.tok++;s=catalog[index];P.series[i]=s;
+    Object.assign(st,{idx:Math.floor(s.pos.length/2),lo:s.wl.auto[0],hi:s.wl.auto[1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null});
+    pnl.querySelector('.ttl').textContent=s.title+(s.hasEnh?' · SNR:'+s.snr:'');
+    sel.replaceChildren();['auto','dicom','full'].forEach(n=>{if(n!=='dicom'||s.wl.dicom)sel.append($('option',{value:n,textContent:'W/L '+n}));});
+    bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;activate(i);draw(i);
+  };
+  pnl.ondragover=e=>{if(e.dataTransfer.types.includes('application/x-dicom-series')){e.preventDefault();e.dataTransfer.dropEffect='copy';pnl.classList.add('drop-target');}};
+  pnl.ondragleave=()=>pnl.classList.remove('drop-target');
+  pnl.ondrop=e=>{e.preventDefault();pnl.classList.remove('drop-target');const raw=e.dataTransfer.getData('application/x-dicom-series');if(!raw)return;const index=Number(raw);if(Number.isInteger(index)&&index>=0&&index<catalog.length)st.assign(index);};
+  pnl.onclick=()=>activate(i);
+
   cv.addEventListener('mouseenter',()=>{
     activate(i);
   });
   cv.addEventListener('wheel',e=>{
-    e.preventDefault();
+    e.preventDefault();if(!P.series[i])return;
     if(e.ctrlKey||e.metaKey){st.zoom=Math.max(0.2,Math.min(20,st.zoom*Math.exp(-e.deltaY*0.01)));draw(i);}
     else setIdx(i,st.idx+(e.deltaY>0?1:-1));
   },{passive:false});
@@ -671,7 +707,7 @@ P.series.forEach((s,i)=>{
   cv.addEventListener('contextmenu',e=>e.preventDefault());
   let drag=null;
   cv.addEventListener('pointerdown',e=>{
-    cv.setPointerCapture(e.pointerId);
+    if(!P.series[i])return;activate(i);cv.setPointerCapture(e.pointerId);
     const tool=e.button===1?'pan':(e.shiftKey?'dist':opt.tool);
     drag={tool,x:e.clientX,y:e.clientY};
     if(!st.lay){drag=null;return;}
@@ -692,7 +728,7 @@ P.series.forEach((s,i)=>{
   cv.addEventListener('pointermove',e=>{
     if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;
     if(drag.tool==='wl'){
-      const targets=opt.link?[...Array(N).keys()]:[i];
+      const targets=opt.link?[...Array(N).keys()].filter(j=>P.series[j]&&!S[j].panel.hidden):[i];
       targets.forEach(j=>{const sj=P.series[j],stj=S[j],r0=Math.max(1e-9,sj.wl.auto[1]-sj.wl.auto[0])/300;
         let c=(stj.hi+stj.lo)/2,w=stj.hi-stj.lo;w=Math.max(r0*2,w+dx*r0);c-=dy*r0;stj.lo=c-w/2;stj.hi=c+w/2;draw(j);});
     }else if(drag.tool==='zoom'){st.zoom=Math.max(.2,Math.min(20,st.zoom*Math.exp(-dy*.015)));draw(i);}
@@ -704,10 +740,21 @@ P.series.forEach((s,i)=>{
   cv.addEventListener('dblclick',()=>resetView(i));
 });
 
+catalog.forEach((s,index)=>{
+ const thumb=$('canvas'),card=$('button',{className:'series-card'+(index===0?' active':''),title:s.title+' · drag into a viewport',ariaLabel:'Load '+s.title,draggable:true});
+ card.append(thumb,$('span',{className:'name',textContent:s.title}),$('span',{className:'meta',textContent:s.plane+' · '+s.pos.length+' images'}));
+ card.ondragstart=e=>{e.dataTransfer.setData('application/x-dicom-series',String(index));e.dataTransfer.effectAllowed='copy';};
+ card.onclick=()=>S[hover].assign(index);rail.append(card);
+ // Decode thumbnail independently from viewport assignment.
+ (async()=>{const data=await inflate(s.items[Math.floor(s.pos.length/2)].o);thumb.width=s.cols;thumb.height=s.rows;const ctx=thumb.getContext('2d'),im=ctx.createImageData(s.cols,s.rows),[lo,hi]=s.wl.auto;for(let k=0;k<data.length;k++){let v=Math.max(0,Math.min(255,255*(val(s,data[k])-lo)/Math.max(1e-9,hi-lo)));if(s.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);})();
+});
+setLayout(2,2);
+new ResizeObserver(()=>requestAnimationFrame(drawAll)).observe(grid);
+
 window.addEventListener('keydown',e=>{
   if(['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName))return;
   if(e.key==='Escape'){S.forEach((_,i)=>cancelAngle(i));drawAll();return;}
-  if(hover<0)return;const st=S[hover],k=e.key.toLowerCase();
+  if(hover<0||!P.series[hover])return;const st=S[hover],k=e.key.toLowerCase();
   if(k==='e'&&P.series[hover].hasEnh)st.togEnh();else if(k==='i')st.togInv();else if(k==='r')resetView(hover);
   else if(k===' '){st.togPlay();e.preventDefault();}
   else if(k==='arrowdown'||k==='arrowright'){setIdx(hover,st.idx+1);e.preventDefault();}
@@ -734,7 +781,8 @@ def build_empty_workspace():
         hint = "Open a DICOM ZIP from the study browser" if i == 0 else "Selected series will appear here"
         cells += f'<div class="panel"><div class="empty-canvas"><div class="corner">VIEWPORT {i+1:02d} / NO SERIES</div><div class="center">{icon}<b>{title}</b>{hint}</div><div class="bottom">W — &nbsp; L — &nbsp; / &nbsp; IMAGE —</div></div></div>'
     tool_rail = '<nav id="tool-rail" aria-label="Image tools">' + ''.join(f'<button class="tool-button" disabled title="{name}: load a study first" aria-label="{name}">{symbol}</button>' for name, symbol in [('Window / level','◐'),('Pan','✥'),('Zoom','⊕'),('Distance','╱'),('Angle','∠'),('Rectangle ROI','□'),('Ellipse ROI','◯'),('Arrow annotation','↗'),('Text annotation','T'),('MPR','MPR'),('MIP','MIP'),('VR','VR')]) + '</nav>'
-    return theme + tools + '<div class="workspace">' + rail + tool_rail + '<div id="grid">' + cells + '</div></div><div class="workspace-footer"><span>No image data loaded</span><span>Window / level · Measurements · Linked scrolling · Cine</span></div>'
+    fit_script = '<script>' + VIEWER_HTML.split('<script>')[1].split('const P=')[0] + '</script>'
+    return theme + tools + '<div class="workspace">' + rail + tool_rail + '<div id="grid">' + cells + '</div></div><div class="workspace-footer"><span>No image data loaded</span><span>Window / level · Measurements · Linked scrolling · Cine</span></div>' + fit_script
 
 
 def build_viewer_html(series_payloads, patient_text=None, panel_height=360):
@@ -744,7 +792,7 @@ def build_viewer_html(series_payloads, patient_text=None, panel_height=360):
     data = json.dumps(payload, separators=(",", ":")).replace("</", r"<\/")
     html = (VIEWER_HTML.replace("__PAYLOAD__", data).replace("__COLS__", str(cols)).replace("__PANEL_H__", str(panel_height)))
     rows = -(-n // cols)
-    return html, max(760, rows * (panel_height + 120) + 180)
+    return html, 760
 
 # ----------------------------------------------------------------------------------------------------------------
 #  Unified Application Presentation Layer (Streamlit Frontend Hub)
@@ -753,7 +801,7 @@ CSS = """
 <style>
 html,body,[data-testid="stAppViewContainer"]{background:#080c12!important;color:#d4deea!important;font-family:Arial,sans-serif}
 [data-testid="stHeader"]{background:#080c12!important}
-[data-testid="stMainBlockContainer"]{max-width:none;padding:3rem 1.1rem .3rem!important}
+[data-testid="stMainBlockContainer"]{height:100vh;overflow:hidden;max-width:none;padding:3rem 1.1rem .3rem!important}
 [data-testid="stVerticalBlock"]{gap:.65rem}
 [data-testid="stSidebar"]{background:#101720!important;border-right:1px solid #26313f;min-width:260px;max-width:290px}
 [data-testid="stSidebarUserContent"]{padding:1.1rem 1rem!important}
@@ -845,7 +893,7 @@ def main():
     if up is None:
         st.markdown('<div class="study-strip"><b>No study loaded</b><span>Open a DICOM ZIP in the study browser</span>'
                     '<span class="right">Identifiers hidden by default</span></div>', unsafe_allow_html=True)
-        st.components.v1.html(build_empty_workspace(), height=760, scrolling=True)
+        st.components.v1.html(build_empty_workspace(), height=760, scrolling=False)
         return
 
     zbytes = up.getvalue()
@@ -871,18 +919,20 @@ def main():
             if dup:
                 st.markdown(f"Duplicate instances removed: `{dup}` (matching SOPInstanceUID).")
 
-    # High-Density Series Selection Hub
-    labels = {s["label"] + f"  [{s['uid'][-6:]}]": s for s in series}
-    
-    sb.caption("SERIES SELECTION")
-    chosen = sb.multiselect(
-        "Visible series", list(labels), default=list(labels)[:min(3, len(labels))],
-        max_selections=MAX_PANELS, key=f"series_{fhash}",
-        help="Select up to six series. Each selected series opens in a separate viewport.",
-    )
-    if not chosen:
-        st.info("Select a series in the study browser to open a viewport.")
-        return
+    # Show every series from the selected study in the in-viewer thumbnail browser.
+    study_groups = {}
+    for item in series:
+        ds = item["items"][0]
+        study_key = (str(getattr(ds, "StudyInstanceUID", "")), str(getattr(ds, "PatientID", "")))
+        study_groups.setdefault(study_key, []).append(item)
+    if len(study_groups) > 1:
+        keys = list(study_groups)
+        selected_study = sb.selectbox("Study", range(len(keys)),
+            format_func=lambda i: f"Study {i + 1} · {len(study_groups[keys[i]])} series")
+        series = study_groups[keys[selected_study]]
+    labels = {item["label"] + f" [{item['uid'][-6:]}]": item for item in series}
+    chosen = list(labels)
+    sb.caption(f"{len(chosen)} series · All listed beside the image workspace")
 
     # Load Progress Vector mapping
     payloads = []
@@ -914,7 +964,7 @@ def main():
         
     # Embed Diagnostic Matrix
     html, height = build_viewer_html(payloads, patient)
-    st.components.v1.html(html, height=height, scrolling=True)
+    st.components.v1.html(html, height=height, scrolling=False)
 
 # ----------------------------------------------------------------------------------------------------------------
 #  Self-Test Diagnostic Entry Point Engine
