@@ -1,9 +1,5 @@
+streamlit
 pydicom
 numpy
+scipy
 pillow
-streamlit
-torch
-torchvision
-scikit-image
-opencv-python-headless
-pytest
