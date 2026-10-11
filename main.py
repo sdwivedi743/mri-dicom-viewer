@@ -1091,8 +1091,9 @@ def _cache_resource(fn):
     return st.cache_resource(show_spinner=False, max_entries=1, ttl=600)(fn) if st else fn
 
 @_cache_resource
-def load_index(file_hash, _zbytes, _progress=None):
-    named, skipped = read_zip(_zbytes, progress=_progress)
+def load_index(file_hash, _zbytes):
+    # Cached work must never render UI or call callbacks that render UI.
+    named, skipped = read_zip(_zbytes)
     series, dup = group_series(named)
     return series, skipped, dup
 
@@ -1160,8 +1161,7 @@ def main():
         progress_bar = st.progress(0.0, text="Reading DICOM images and grouping series...")
         embed_html(build_loading_html(), height=420)
     try:
-        series, skipped, dup = load_index(fhash, zbytes,
-            _progress=lambda fraction: progress_bar.progress(0.15 * fraction, text="Reading DICOM archive..."))
+        series, skipped, dup = load_index(fhash, zbytes)
     except Exception as exc:
         loading.empty()
         st.error(f"Could not read this archive: {exc}")
