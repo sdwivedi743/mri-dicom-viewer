@@ -94,7 +94,7 @@ if uploaded_file is not None:
                     except Exception:
                         continue
 
-    if series_groups:
+    if len(series_groups) > 0:
         all_series_names = sorted(list(series_groups.keys()))
         
         # 1. SIDEBAR NAVIGATION HIERARCHY (Restored Sequence Selector Matrix)
@@ -150,10 +150,10 @@ if uploaded_file is not None:
                     
                     try:
                         raw_w = getattr(dcm, 'WindowWidth', pixels.max() - pixels.min())
-                        dw = float(raw_w if isinstance(raw_w, (list, pydicom.multival.MultiValue)) else raw_w)
+                        dw = float(raw_w if not isinstance(raw_w, (list, pydicom.multival.MultiValue)) else raw_w[0])
                         
                         raw_l = getattr(dcm, 'WindowCenter', (pixels.max() + pixels.min()) / 2)
-                        dl = float(raw_l if isinstance(raw_l, (list, pydicom.multival.MultiValue)) else raw_l)
+                        dl = float(raw_l if not isinstance(raw_l, (list, pydicom.multival.MultiValue)) else raw_l[0])
                     except Exception:
                         dw = float(pixels.max() - pixels.min())
                         dl = float((pixels.max() + pixels.min()) / 2)
@@ -194,86 +194,105 @@ if uploaded_file is not None:
                 <div id="panel_{idx}" style="background: #0b0b0b; border: 1px solid #222; border-radius: 6px; padding: 10px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
                     <div id="title_{idx}" style="color: #00ffcc; font-weight: 500; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px;">Loading Viewport...</div>
                     <canvas id="canvas_{idx}" style="background: #000; max-width: 100%; width: 100%; height: auto; border: 1px solid #1a1a1a; cursor: crosshair; border-radius: 4px;"></canvas>
-Slice: --
+                    <div id="status_{idx}" style="color: #888; font-size: 11px; margin-top: 6px; font-family: monospace;">Slice: --</div>
+                </div>
+                """
 
-"""
-# Complete Interactive Canvas Workspace Integration Engine
-html_code = """
+            # Complete Interactive Canvas Workspace Integration Engine
+            html_code = """
+            <div style="background-color: #050505; padding: 10px; border-radius: 8px; color: #ffffff; font-family: -apple-system, sans-serif; font-size:12px;">
+                <div style="background: #111; padding: 10px; margin-bottom: 15px; border-radius: 6px; text-align: center; border: 1px solid #222; color: #e0e0e0; font-size:13px;">
+                    🖥️ <b>Diagnostic Console Ready</b> | Hover over viewport | <b>Scroll Wheel:</b> Flip Slices | <b>Left-Click & Drag:</b> Dynamic Windowing (Contrast/Brightness)
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(""" + str(cols_count) + """, 1fr); gap: 15px;">
+                    """ + panels_html + """
+                </div>
+            </div>
+            <script>
+                const workstationData = """ + workstation_json + """;
+                const numPanels = workstationData.length;
+                
+                let currentIndices = new Array(numPanels).fill(0);
+                let windowWidths = workstationData.map(p => p.slices && p.slices.length > 0 ? p.slices[0].default_w : 1000);
+                let windowLevels = workstationData.map(p => p.slices && p.slices.length > 0 ? p.slices[0].default_l : 500);
+                
+                let isDragging = false;
+                let activePanelIdx = null;
+                let startX, startY;
 
+                function renderPanel(idx) {
+                    const panel = workstationData[idx];
+                    const sliceIdx = currentIndices[idx];
+                    if (!panel.slices || !panel.slices[sliceIdx]) return;
+                    const sliceData = panel.slices[sliceIdx];
+                    
+                    document.getElementById('title_' + idx).innerText = panel.title;
+                    const canvas = document.getElementById('canvas_' + idx);
+                    const ctx = canvas.getContext('2d');
+                    
+                    const imgObj = new Image();
+                    imgObj.src = sliceData.base64;
+                    imgObj.onload = function() {
+                        canvas.width = imgObj.width || 512;
+                        canvas.height = imgObj.height || 512;
+                        
+                        let bPct = (windowLevels[idx] / sliceData.raw_max) * 100;
+                        let cPct = (255 / (windowWidths[idx] || 1)) * 100;
+                        
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
+                        ctx.filter = "brightness(" + (bPct + 50) + "%) contrast(" + cPct + "%)";
+                        ctx.drawImage(imgObj, 0, 0);
+                        
+                        document.getElementById('status_' + idx).innerText = 
+                            "Slice: " + (sliceIdx + 1) + "/" + panel.total_slices + " | W: " + Math.round(windowWidths[idx]) + " L: " + Math.round(windowLevels[idx]);
+                    };
+                }
 
-🖥️ Diagnostic Console Ready | Hover over viewport | Scroll Wheel: Flip Slices | Left-Click & Drag: Dynamic Windowing (Contrast/Brightness)
+                for(let i=0; i<numPanels; i++) {
+                    const canvas = document.getElementById('canvas_' + i);
+                    const panelIdx = i;
+                    
+                    canvas.addEventListener('wheel', function(e) {
+                        e.preventDefault();
+                        if(e.deltaY > 0) {
+                            currentIndices[panelIdx] = (currentIndices[panelIdx] + 1) % workstationData[panelIdx].total_slices;
+                        } else {
+                            currentIndices[panelIdx] = (currentIndices[panelIdx] - 1 + workstationData[panelIdx].total_slices) % workstationData[panelIdx].total_slices;
+                        }
+                        renderPanel(panelIdx);
+                    }, { passive: false });
+                    
+                    canvas.addEventListener('mousedown', function(e) {
+                        isDragging = true;
+                        activePanelIdx = panelIdx;
+                        startX = e.clientX;
+                        startY = e.clientY;
+                    });
+                    
+                    renderPanel(i);
+                }
 
-<div style="display: grid; grid-template-columns: repeat(""" + str(cols_count) + """, 1fr); gap: 15px;">
-""" + panels_html + """
+                window.addEventListener('mousemove', function(e) {
+                    if (!isDragging || activePanelIdx === null) return;
+                    
+                    let deltaX = e.clientX - startX;
+                    let deltaY = e.clientY - startY;
+                    
+                    startX = e.clientX;
+                    startY = e.clientY;
 
+                    windowWidths[activePanelIdx] += deltaX * 3;
+                    windowLevels[activePanelIdx] -= deltaY * 3;
+                    
+                    renderPanel(activePanelIdx);
+                });
 
-
-const workstationData = """ + workstation_json + """;
-const numPanels = workstationData.length;
-let currentIndices = new Array(numPanels).fill(0);
-let windowWidths = workstationData.map(p => p.slices && p.slices.length > 0 ? p.slices.default_w : 1000);
-let windowLevels = workstationData.map(p => p.slices && p.slices.length > 0 ? p.slices.default_l : 500);
-let isDragging = false;
-let activePanelIdx = null;
-let startX, startY;
-function renderPanel(idx) {
-const panel = workstationData[idx];
-const sliceIdx = currentIndices[idx];
-if (!panel.slices || !panel.slices[sliceIdx]) return;
-const sliceData = panel.slices[sliceIdx];
-document.getElementById('title_' + idx).innerText = panel.title;
-const canvas = document.getElementById('canvas_' + idx);
-const ctx = canvas.getContext('2d');
-const imgObj = new Image();
-imgObj.src = sliceData.base64;
-imgObj.onload = function() {
-canvas.width = imgObj.width || 512;
-canvas.height = imgObj.height || 512;
-let bPct = (windowLevels[idx] / sliceData.raw_max) * 100;
-let cPct = (255 / (windowWidths[idx] || 1)) * 100;
-ctx.clearRect(0, 0, canvas.width, canvas.height);
-ctx.filter = "brightness(" + (bPct + 50) + "%) contrast(" + cPct + "%)";
-ctx.drawImage(imgObj, 0, 0);
-document.getElementById('status_' + idx).innerText =
-"Slice: " + (sliceIdx + 1) + "/" + panel.total_slices + " | W: " + Math.round(windowWidths[idx]) + " L: " + Math.round(windowLevels[idx]);
-};
-}
-for(let i=0; i<numPanels; i++) {
-const canvas = document.getElementById('canvas_' + i);
-const panelIdx = i;
-canvas.addEventListener('wheel', function(e) {
-e.preventDefault();
-if(e.deltaY > 0) {
-currentIndices[panelIdx] = (currentIndices[panelIdx] + 1) % workstationData[panelIdx].total_slices;
-} else {
-currentIndices[panelIdx] = (currentIndices[panelIdx] - 1 + workstationData[panelIdx].total_slices) % workstationData[panelIdx].total_slices;
-}
-renderPanel(panelIdx);
-}, { passive: false });
-canvas.addEventListener('mousedown', function(e) {
-isDragging = true;
-activePanelIdx = panelIdx;
-startX = e.clientX;
-startY = e.clientY;
-});
-renderPanel(i);
-}
-window.addEventListener('mousemove', function(e) {
-if (!isDragging || activePanelIdx === null) return;
-let deltaX = e.clientX - startX;
-let deltaY = e.clientY - startY;
-startX = e.clientX;
-startY = e.clientY;
-windowWidths[activePanelIdx] += deltaX * 3;
-windowLevels[activePanelIdx] -= deltaY * 3;
-renderPanel(activePanelIdx);
-});
-window.addEventListener('mouseup', function() {
-isDragging = false;
-activePanelIdx = null;
-});
-
-"""
-st.components.v1.html(html_code, height=window_height)
-else:
-st.error("No valid multi-sequence folders containing imaging tensors discovered inside this ZIP.")
+                window.addEventListener('mouseup', function() {
+                    isDragging = false;
+                    activePanelIdx = null;
+                });
+            </script>
+            """
+            st.components.v1.html(html_code, height=window_height)
+    else:
+        st.error("No valid multi-sequence folders containing imaging tensors discovered inside this ZIP.")
