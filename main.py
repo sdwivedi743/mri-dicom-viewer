@@ -568,7 +568,7 @@ const P=__PAYLOAD__;
 const catalog=P.series;
 P.series=Array.from({length:16},(_,i)=>i<Math.min(4,catalog.length)?catalog[i]:null);
 const PH=__PANEL_H__, N=16;
-let layoutRows=2,layoutCols=2;
+let layoutRows=2,layoutCols=2,expandedViewport=null,expandedLayout=null;
 const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),lo:s.wl.auto[0],hi:s.wl.auto[1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null,ctLike:false,ctContrast:1.25,ctSharp:.25,ctRestore:null});});
 const opt={sync:true,link:false,tool:'wl',overlays:true,refs:true,viewLink:false};
 function seriesKey(s){return s.memoryId||String(catalog.indexOf(s));}
@@ -653,6 +653,26 @@ function drawPointMarker(i,ctx,dpr){const st=S[i],m=st.matchPoint,g=geom(i);if(!
  const xy=imagePoint(g,m.point),p=toScreen(st,...xy);ctx.strokeStyle='#63c5e7';ctx.lineWidth=1.5*dpr;ctx.beginPath();
  for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){ctx.moveTo(p[0]+dx*4*dpr,p[1]+dy*4*dpr);ctx.lineTo(p[0]+dx*12*dpr,p[1]+dy*12*dpr);}ctx.stroke();
 }
+function refreshMagnifier(i){const st=S[i],s=P.series[i],pos=st.lensPos,lens=st.lens;
+ if(!lens)return;if(!st.magnify||!pos||!s||!st.lay||!st.oc||st.panel.hidden||!nearestMenu.hidden){lens.hidden=true;return;}
+ const rc=st.cv.getBoundingClientRect(),xy=toImage(st,pos.x-rc.left,pos.y-rc.top);
+ if(xy[0]<0||xy[1]<0||xy[0]>=s.cols||xy[1]>=s.rows){lens.hidden=true;return;}
+ const size=Math.min(160,rc.width,rc.height),dpr=window.devicePixelRatio||1;
+ lens.style.width=size+'px';lens.style.height=size+'px';lens.style.left=Math.max(rc.left,Math.min(pos.x+22,rc.right-size))+'px';lens.style.top=Math.max(rc.top,Math.min(pos.y-size/2,rc.bottom-size))+'px';
+ lens.width=Math.round(size*dpr);lens.height=Math.round(size*dpr);const ctx=lens.getContext('2d');ctx.fillStyle='#000';ctx.fillRect(0,0,lens.width,lens.height);
+ const scale=st.lay.sc*2.5;ctx.setTransform(scale,0,0,scale*st.lay.asp,lens.width/2-xy[0]*scale,lens.height/2-xy[1]*scale*st.lay.asp);ctx.imageSmoothingEnabled=false;ctx.drawImage(st.oc,0,0);ctx.setTransform(1,0,0,1,0,0);
+ ctx.fillStyle='#91dcf5';ctx.font=(10*dpr)+'px sans-serif';ctx.textAlign='center';ctx.shadowColor='#000';ctx.shadowBlur=3*dpr;ctx.fillText('2.5×',lens.width/2,lens.height-12*dpr);lens.hidden=false;
+}
+function stopMagnifier(i){const st=S[i];st.magnify=false;st.lensPos=null;if(st.lens)st.lens.hidden=true;}
+function resumeExpandedCine(){if(!expandedLayout)return;for(const [i,series] of expandedLayout.paused)if(P.series[i]===series&&!S[i].play)S[i].togPlay();}
+function toggleViewport(i){if(!P.series[i])return;closeNearestMenu();S.forEach(st=>{if(st.lens)st.lens.hidden=true;st.lensPos=null;});
+ if(expandedViewport!==null){const previous=expandedLayout;resumeExpandedCine();expandedViewport=null;expandedLayout=null;setLayout(previous.rows,previous.cols);activate(previous.active);return;}
+ const paused=[];S.forEach((st,j)=>{if(j!==i&&st.play){paused.push([j,P.series[j]]);st.togPlay();}});
+ expandedLayout={rows:layoutRows,cols:layoutCols,active:i,paused};expandedViewport=i;
+ grid.style.gridTemplateColumns='minmax(0,1fr)';grid.style.gridTemplateRows='minmax(0,1fr)';grid.classList.remove('dense');S.forEach((st,j)=>st.panel.hidden=j!==i);
+ layout.textContent='Layout: 1 × 1 · expanded';activate(i);requestAnimationFrame(drawAll);
+}
+
 function viewScale(i){const s=P.series[i],st=S[i],dpr=window.devicePixelRatio||1,asp=s.spacing[0]/s.spacing[1];return Math.min(st.cv.clientWidth*dpr/s.cols,st.cv.clientHeight*dpr/(s.rows*asp))*.98*st.zoom;}
 function updateView(i,pan=false){const source=geom(i),st=S[i];if(opt.viewLink&&source){const sc=viewScale(i),dpr=window.devicePixelRatio||1,s=P.series[i];
  const center=patientPoint(source,s.cols/2-st.px*dpr/sc,s.rows/2-st.py*dpr/(sc*s.spacing[0]/s.spacing[1]));
@@ -735,7 +755,7 @@ async function draw(i){
     }
   }
   drawReferences(i,ctx,dpr);drawPointMarker(i,ctx,dpr);
-  ctx.shadowBlur=0;
+  ctx.shadowBlur=0;refreshMagnifier(i);
   if(i===hover){refreshOverlays();updateActiveSummary();}
   if(i===hover||!P.series.some((other,j)=>j!==i&&other===s&&!S[j].panel.hidden))rememberSeries(i);
   st.stat.textContent='Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+(geom(i)?' · Loc: '+s.pos[st.idx].toFixed(1)+'mm':' · Position unavailable')+' · W: '+Math.round(st.hi-st.lo)+' L: '+Math.round((st.hi+st.lo)/2)+
@@ -790,18 +810,21 @@ nearestMenu.style.cssText='position:fixed;z-index:2000;padding:5px;background:#1
 const nearestAction=$('button',{textContent:'Nearest image in other planes',role:'menuitem'});
 nearestAction.style.cssText='display:block;width:100%;text-align:left';
 const nearestHelp=$('div');nearestHelp.style.cssText='max-width:260px;padding:5px 8px;color:#7296ac;font-size:10px';
-nearestMenu.append(nearestAction,nearestHelp);document.body.append(nearestMenu);
+const magnifierAction=$('button',{textContent:'Enable magnifier',role:'menuitem'});magnifierAction.style.cssText='display:block;width:100%;text-align:left;margin-top:4px';
+nearestMenu.append(nearestAction,nearestHelp,magnifierAction);document.body.append(nearestMenu);
 const nearestStatus=$('span',{id:'nearest-image-status',hidden:true,role:'status'});nearestStatus.style.cssText='position:fixed;bottom:34px;right:12px;z-index:1900;max-width:360px;padding:8px 10px;background:#15212e;border:1px solid #435970;border-radius:4px;color:#91bdd4;font-size:10px;pointer-events:none';
 let nearestNoticeTimer;function showNearestStatus(text){nearestStatus.textContent=text;nearestStatus.hidden=false;clearTimeout(nearestNoticeTimer);nearestNoticeTimer=setTimeout(()=>nearestStatus.hidden=true,6000);}
 function closeNearestMenu(){nearestMenu.hidden=true;}
 document.addEventListener('pointerdown',e=>{if(!nearestMenu.contains(e.target))closeNearestMenu();});
 window.addEventListener('resize',closeNearestMenu);
-window.addEventListener('keydown',e=>{if(e.key==='Escape')closeNearestMenu();});
+window.addEventListener('keydown',e=>{if(e.key==='Escape'){closeNearestMenu();S.forEach((_,i)=>stopMagnifier(i));}});
 function openNearestMenu(i,e){
  e.preventDefault();const series=P.series[i],st=S[i];if(!series||!st.lay)return;
- activate(i);const rc=st.cv.getBoundingClientRect();
+ activate(i);st.lens.hidden=true;const rc=st.cv.getBoundingClientRect();
  const [x,y]=toImage(st,e.clientX-rc.left,e.clientY-rc.top),source=geom(i);
  const inside=x>=0&&y>=0&&x<series.cols&&y<series.rows;
+ magnifierAction.disabled=!inside&&!st.magnify;magnifierAction.textContent=st.magnify?'Disable magnifier':'Enable magnifier';
+ magnifierAction.onclick=()=>{closeNearestMenu();if(P.series[i]!==series)return;if(st.magnify){stopMagnifier(i);}else{st.magnify=true;st.lensPos=null;st.lens.hidden=true;showNearestStatus('Magnifier enabled · hover over the image. Escape turns it off.');}st.cv.focus();};
  nearestAction.disabled=!inside||!source;
  nearestHelp.textContent=!inside?'Right-click directly on the anatomy.':!source?'Unavailable: supported DICOM geometry is missing.':'Uses the clicked point and compatible DICOM geometry.';
  const point=inside&&source?patientPoint(source,x,y):null;
@@ -874,6 +897,8 @@ layoutMenu.append(layoutCaption,matrix);layoutPicker.append(layout);bar.append(l
 layout.onclick=()=>{layoutMenu.hidden=!layoutMenu.hidden;const b=layout.getBoundingClientRect();layoutMenu.style.top=(b.bottom+4)+'px';layoutMenu.style.left=Math.min(b.left,window.innerWidth-150)+'px';};
 document.addEventListener('pointerdown',e=>{if(!layoutMenu.contains(e.target)&&e.target!==layout)layoutMenu.hidden=true;});
 function setLayout(rows,cols){
+ if(expandedViewport!==null){resumeExpandedCine();expandedViewport=null;expandedLayout=null;}
+ S.forEach(st=>{if(st.lens)st.lens.hidden=true;st.lensPos=null;});
  layoutRows=rows;layoutCols=cols;layout.textContent='Layout: '+rows+' × '+cols;
  grid.style.gridTemplateColumns='repeat('+cols+',minmax(0,1fr))';grid.style.gridTemplateRows='repeat('+rows+',minmax(0,1fr))';grid.classList.toggle('dense',rows>=3||cols>=3);
  S.forEach((st,i)=>{st.panel.hidden=i>=rows*cols;if(st.panel.hidden&&st.play){clearInterval(st.play);st.play=null;}});
@@ -920,6 +945,7 @@ P.series.forEach((item,i)=>{
   let s=item||catalog[0];
   const st=S[i],cv=$('canvas'),stat=$('div',{className:'st'}),pnl=$('div',{className:'panel'});
   if(i===0) pnl.classList.add('active-viewport');
+  st.lens=$('canvas',{className:'magnifier-lens',hidden:true});st.lens.style.cssText='position:fixed;z-index:1200;pointer-events:none;border:2px solid #63c5e7;border-radius:50%;background:#000;box-shadow:0 3px 16px #000a';document.body.append(st.lens);st.magnify=false;st.lensPos=null;
   st.cv=cv;st.stat=stat;st.panel=pnl;pnl.hidden=i>=4;
   
   const sel=$('select');
@@ -953,13 +979,13 @@ P.series.forEach((item,i)=>{
   pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,bRst,bPlay,settings]),cv,stat);
   grid.append(pnl);
   const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
-  st.clear=()=>{rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover)updateActiveSummary();};
+  st.clear=()=>{stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover)updateActiveSummary();};
   st.displayConfig=()=>({wl:sel.value,inv:st.inv,enh:st.enh,ctLike:st.ctLike,ctContrast:st.ctContrast,ctSharp:st.ctSharp});
   st.applyDisplay=c=>{sel.value=['auto','dicom','full'].includes(c.wl)&&s.wl[c.wl]?c.wl:'auto';preset(i,sel.value);st.inv=!!c.inv;st.enh=!!c.enh&&s.hasEnh;bInv.className=st.inv?'on':'';bEnh.className=st.enh?'on':'';if(c.ctLike&&s.modality==='MR'){st.ctContrast=Math.max(.7,Math.min(1.8,Number(c.ctContrast)||1.25));st.ctSharp=Math.max(0,Math.min(.5,Number(c.ctSharp)||0));settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;bCT.onclick();}draw(i);};
   st.syncDisplayUI=()=>{sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;bOriginal.hidden=!st.ctLike;settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
   st.assign=(index)=>{
     if(P.series[i]===catalog[index]){activate(i);return;}
-    rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
+    stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
     st.tok++;s=catalog[index];P.series[i]=s;
     Object.assign(st,{idx:Math.floor(s.pos.length/2),lo:s.wl.auto[0],hi:s.wl.auto[1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null,matchPoint:null,ctLike:false,ctRestore:null});
     const restored=restoredState(index);if(restored)Object.assign(st,restored);
@@ -985,7 +1011,9 @@ P.series.forEach((item,i)=>{
   cv.tabIndex=0;cv.addEventListener('contextmenu',e=>openNearestMenu(i,e));
   let drag=null;
   cv.addEventListener('pointerdown',e=>{
-    if(e.button===2||!P.series[i])return;activate(i);cv.setPointerCapture(e.pointerId);
+    if(e.button===2||!P.series[i])return;
+    if(e.button===0){const prev=st.clickSnapshot;if(!prev||prev.idx!==st.idx||performance.now()-prev.at>650||Math.hypot(prev.x-e.clientX,prev.y-e.clientY)>4){st.clickSnapshot={idx:st.idx,at:performance.now(),x:e.clientX,y:e.clientY,meas:structuredClone(st.meas[st.idx]||[]),pending:st.pendingAngle?{idx:st.pendingAngle.idx,id:st.pendingAngle.m.id,step:st.pendingAngle.step}:null};}}
+    activate(i);cv.setPointerCapture(e.pointerId);
     const tool=e.button===1?'pan':(e.shiftKey?'dist':opt.tool);
     drag={tool,x:e.clientX,y:e.clientY};
     if(!st.lay){drag=null;return;}
@@ -1008,6 +1036,7 @@ P.series.forEach((item,i)=>{
   });
   
   cv.addEventListener('pointermove',e=>{
+    if(st.magnify&&nearestMenu.hidden){st.lensPos={x:e.clientX,y:e.clientY};refreshMagnifier(i);}
     if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;
     if(drag.tool==='wl'){
       const targets=opt.link?[...Array(N).keys()].filter(j=>P.series[j]&&!S[j].panel.hidden):[i];
@@ -1019,7 +1048,8 @@ P.series.forEach((item,i)=>{
   });
   const end=()=>{if(drag&&drag.m&&['roi','ellipse'].includes(drag.m.type))roiStats(i,drag.m,drag.idx);drag=null;};
   cv.addEventListener('pointerup',end);cv.addEventListener('pointercancel',end);
-  cv.addEventListener('dblclick',()=>resetView(i));
+  cv.addEventListener('mouseleave',()=>{st.lensPos=null;st.lens.hidden=true;});
+  cv.addEventListener('dblclick',e=>{e.preventDefault();const saved=st.clickSnapshot;if(saved&&saved.idx===st.idx&&performance.now()-saved.at<650){st.meas[st.idx]=saved.meas;const m=saved.pending?saved.meas.find(m=>m.id===saved.pending.id):null;st.pendingAngle=m?{idx:saved.pending.idx,m,step:saved.pending.step}:null;}st.clickSnapshot=null;toggleViewport(i);});
 });
 
 catalog.forEach((s,index)=>{
@@ -1235,7 +1265,7 @@ def main():
     )
     sb = st.sidebar
     sb.markdown("### Study browser")
-    sb.caption("DICOM ARCHIVE · WORKFLOW UPDATE 13")
+    sb.caption("DICOM ARCHIVE · WORKFLOW UPDATE 14")
     up = sb.file_uploader("Open DICOM study", type=["zip"],
                           help="Upload a ZIP archive containing DICOM images.")
     sb.caption("Files are processed by the Streamlit server hosting this app.")
@@ -1244,6 +1274,8 @@ def main():
         st.markdown("**Study overview & search:** below upload after loading. Type a series name or filter a plane to narrow thumbnails.\n\n"
                     "**Point markers:** right-click anatomy → Nearest image in other planes. Blue crosshairs appear briefly.\n\n"
                     "**Linked zoom/pan:** enable Zoom / pan linked in the image toolbar. Zoom links compatible views; pan links parallel views.\n\n"
+                    "**Expand view:** double-click an image; double-click again to restore the layout.\n\n"
+                    "**Magnifier:** right-click → Enable magnifier, then hover over anatomy. Escape or Disable magnifier turns it off.\n\n"
                     "**Display memory:** automatic. Switch away from a series and return; its slice and display settings are restored within this browser tab.")
     sb.divider()
     sb.caption("PROCESSING")
@@ -1269,7 +1301,7 @@ def main():
     with sb.expander("Mouse & keyboard guide"):
         st.markdown("**Scroll** · Browse images\n\n**Ctrl / Cmd + scroll** · Zoom\n\n"
                     "**Middle drag / Pan tool** · Move image\n\n**Shift + drag** · Distance\n\n"
-                    "**Double-click / R** · Reset view\n\n**Space** · Cine playback\n\n"
+                    "**Double-click** · Expand / restore viewport\n\n**R** · Reset view\n\n**Space** · Cine playback\n\n"
                     "**I** · Invert · **E** · Enhancement")
 
     if up is None:
