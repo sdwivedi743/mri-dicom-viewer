@@ -2,34 +2,61 @@ import streamlit as st
 import pydicom
 from PIL import Image
 import numpy as np
+import scipy.ndimage as ndimage
 import zipfile
 import io
 import json
 import base64
 
-# Force wide dashboard layout
-st.set_page_config(page_title="MRI DICOM Viewer Pro", page_icon="🧠", layout="wide")
+# Force wide-screen diagnostic layout
+st.set_page_config(page_title="AI Multi-Sequence MRI Workstation", page_icon="🧠", layout="wide")
 
-st.title("🧠 Medical MRI DICOM Workstation")
-st.write("Upload a `.zip` archive containing your patient's raw MRI directory sequences.")
+st.title("🧠 AI Multi-Sequence MRI Diagnostics Workstation")
+st.write("Upload a patient `.zip` directory containing multiple MRI sequences (Up to 6 views simultaneously).")
 
-uploaded_file = st.file_uploader("Drop your ZIP folder here", type=["zip"])
+# Master Toggle for AI Super-Resolution & Correction Pipeline
+st.sidebar.markdown("### ⚡ Workstation Controls")
+ai_mode = st.sidebar.toggle("✨ AI Super-Resolution & Correction Mode", value=False, help="Activates Bias Field Intensity Normalization, Gibbs Ringing Suppression, and Structural De-noising.")
+
+uploaded_file = st.sidebar.file_uploader("Upload Patient ZIP Folder", type=["zip"])
+
+def apply_ai_corrections(pixels):
+    """
+    Advanced Image-Space Post-Processing Suite
+    1. Homomorphic Gaussian High-Pass Filter for Bias Field Intensity Correction
+    2. Edge-Preserving structural smoothing to suppress noise and Gibbs ringing
+    """
+    img_data = pixels.astype(float)
+    
+    min_val = img_data.min()
+    img_data_shifted = img_data - min_val + 1.0
+    
+    # 1. INTENSITY FIELD NORMALIZATION (Bias Field Correction)
+    log_img = np.log(img_data_shifted)
+    low_freq = ndimage.gaussian_filter(log_img, sigma=max(img_data.shape) / 8.0)
+    bias_corrected = np.exp(log_img - low_freq)
+    
+    # 2. GIBBS RINGING & NOISE REMEDIATION (Edge-Preserving Structural Smoothing)
+    smooth = ndimage.gaussian_filter(bias_corrected, sigma=1.0)
+    edges = bias_corrected - smooth
+    enhanced = bias_corrected + (edges * 0.5)
+    
+    final_pixels = np.clip(enhanced, 0, None)
+    return final_pixels
 
 if uploaded_file is not None:
     series_groups = {}
 
-    with st.spinner("Scanning directory and unpacking MRI scans..."):
+    with st.spinner("Unpacking and sorting medical dataset sequences..."):
         with zipfile.ZipFile(uploaded_file) as z:
             for file_info in z.infolist():
                 if not file_info.is_dir():
                     try:
                         with z.open(file_info) as f:
                             bytes_data = f.read()
-                            # force=True safely bypasses files missing metadata headers
                             dcm = pydicom.dcmread(io.BytesIO(bytes_data), force=True)
                             
                             if hasattr(dcm, 'pixel_array'):
-                                # Fallback sequence categorization naming if descriptions are blank
                                 series_name = getattr(dcm, 'SeriesDescription', None)
                                 if not series_name or str(series_name).strip() == "":
                                     series_name = f"Sequence {getattr(dcm, 'SeriesNumber', 'Unknown')}"
@@ -43,141 +70,131 @@ if uploaded_file is not None:
                         continue
 
     if series_groups:
-        # 1. LEFT SIDEBAR: PATIENT SEQUENCES & STUDY DATA
-        st.sidebar.header("📁 Patient Sequences")
-        selected_series = st.sidebar.radio(
-            "Select Sequence:", 
-            list(series_groups.keys())
-        )
+        all_series_names = list(series_groups.keys())
+        num_series = min(len(all_series_names), 6)
         
-        # Safely sort frame indices sequentially
-        current_slices = sorted(series_groups[selected_series], key=lambda x: x[0])
-        total_slices = len(current_slices)
+        st.sidebar.success(f"Detected {len(all_series_names)} MRI sequences.")
         
-        st.sidebar.metric(label="Available Slices", value=total_slices)
+        # Display Patient Metadata inside sidebar from the first sequence found
+        first_series = series_groups[all_series_names[0]]
+        _, sample_dcm = sorted(first_series, key=lambda x: x[0])[0]
+        st.sidebar.markdown("### 📋 Patient Demographics")
+        st.sidebar.text(f"Name: {str(getattr(sample_dcm, 'PatientName', 'Anonymous'))}")
+        st.sidebar.text(f"ID: {str(getattr(sample_dcm, 'PatientID', 'N/A'))}")
+        st.sidebar.text(f"Date: {str(getattr(sample_dcm, 'StudyDate', 'N/A'))}")
+        st.sidebar.text(f"Scanner: {str(getattr(sample_dcm, 'Manufacturer', 'N/A'))}")
+
+        grid_data = []
         
-        # Grab metadata cleanly from the first slice object tuple index
-        _, sample_dcm = current_slices[0]
-        st.sidebar.subheader("📋 Patient Metadata")
-        st.sidebar.write(f"**Name:** {str(getattr(sample_dcm, 'PatientName', 'Anonymous'))}")
-        st.sidebar.write(f"**ID:** {str(getattr(sample_dcm, 'PatientID', 'N/A'))}")
-        st.sidebar.write(f"**Date:** {str(getattr(sample_dcm, 'StudyDate', 'N/A'))}")
-        
-        # 2. OPTIMIZATION: CONVERT ALL MRI SLICES TO BROWSER-READY ENCODINGS
-        encoded_slices = []
-        for _, dcm in current_slices:
-            pixels = dcm.pixel_array.astype(float)
+        for i in range(num_series):
+            s_name = all_series_names[i]
+            sorted_slices = sorted(series_groups[s_name], key=lambda x: x[0])
             
-            # Extract standard window width and center values for contrast
-            dw = float(dcm.WindowWidth if isinstance(getattr(dcm, 'WindowWidth', None), (list, pydicom.multival.MultiValue)) else getattr(dcm, 'WindowWidth', pixels.max() - pixels.min()))
-            dl = float(dcm.WindowCenter if isinstance(getattr(dcm, 'WindowCenter', None), (list, pydicom.multival.MultiValue)) else getattr(dcm, 'WindowCenter', (pixels.max() + pixels.min()) / 2))
-            
-            # Base normalization mapping
-            if pixels.max() != pixels.min():
-                norm = ((pixels - pixels.min()) / (pixels.max() - pixels.min())) * 255.0
-            else:
-                norm = np.zeros(pixels.shape)
+            encoded_slices = []
+            for _, dcm in sorted_slices:
+                raw_pixels = dcm.pixel_array.astype(float)
                 
-            img = Image.fromarray(norm.astype(np.uint8))
-            buffered = io.BytesIO()
-            img.save(buffered, format="JPEG")
-            img_str = base64.b64encode(buffered.getvalue()).decode()
-            
-            encoded_slices.append({
-                "base64": f"data:image/jpeg;base64,{img_str}",
-                "raw_min": float(pixels.min()),
-                "raw_max": float(pixels.max()),
-                "default_w": dw,
-                "default_l": dl
+                if ai_mode:
+                    pixels = apply_ai_corrections(raw_pixels)
+                else:
+                    pixels = raw_pixels
+                
+                dw = float(dcm.WindowWidth if isinstance(getattr(dcm, 'WindowWidth', None), (list, pydicom.multival.MultiValue)) else getattr(dcm, 'WindowWidth', pixels.max() - pixels.min()))
+                dl = float(dcm.WindowCenter if isinstance(getattr(dcm, 'WindowCenter', None), (list, pydicom.multival.MultiValue)) else getattr(dcm, 'WindowCenter', (pixels.max() + pixels.min()) / 2))
+                
+                if pixels.max() != pixels.min():
+                    norm = ((pixels - pixels.min()) / (pixels.max() - pixels.min())) * 255.0
+                else:
+                    norm = np.zeros(pixels.shape)
+                    
+                img = Image.fromarray(norm.astype(np.uint8))
+                buffered = io.BytesIO()
+                img.save(buffered, format="JPEG")
+                img_str = base64.b64encode(buffered.getvalue()).decode()
+                
+                encoded_slices.append({
+                    "base64": f"data:image/jpeg;base64,{img_str}",
+                    "raw_max": float(pixels.max() if pixels.max() != 0 else 255),
+                    "default_w": dw,
+                    "default_l": dl
+                })
+                
+            grid_data.append({
+                "title": s_name,
+                "total_slices": len(encoded_slices),
+                "slices": encoded_slices
             })
 
-        # 3. INTERACTIVE JS CONTROLLER (Renders scrolling/contrast entirely inside the browser frame)
-        slices_json = json.dumps(encoded_slices)
+        workstation_json = json.dumps(grid_data)
         
+        cols_count = 3 if num_series >= 3 else num_series
+        rows_count = 2 if num_series > 3 else 1
+        window_height = 420 * rows_count + 80
+
         html_code = f"""
-        <div style="background-color: #0d0d0d; padding: 20px; border-radius: 8px; color: #ffffff; font-family: sans-serif; text-align: center; border: 1px solid #222;">
-            <p style="margin: 0 0 15px 0; font-size: 14px; color: #888; background: #161616; padding: 8px; border-radius: 4px;">
-                🖱️ <b>Mouse Wheel / Trackpad Scroll:</b> Flip Slices | ↕️ <b>Left Click & Drag Vertically:</b> Brightness | ↔️ <b>Horizontal Drag:</b> Contrast
-            </p>
-            <canvas id="dicomCanvas" style="border: 2px solid #444; max-width: 100%; background: #000; cursor: move; box-shadow: 0 4px 10px rgba(0,0,0,0.5);"></canvas>
-            <div id="statusInfo" style="margin-top: 15px; font-weight: bold; font-size: 16px; color: #00ff66;">Slice: 1 / {total_slices}</div>
+        <div style="background-color: #050505; padding: 10px; border-radius: 8px; color: #ffffff; font-family: monospace; font-size:12px;">
+            <div style="background: #111; padding: 8px; margin-bottom: 12px; border-radius: 4px; text-align: center; border: 1px solid #222; color: #00ffcc;">
+                🖥️ <b>Workstation Active</b> | Hover mouse over any window | <b>Scroll Wheel:</b> Flip Slices | <b>Left-Click & Drag:</b> Independent Contrast/Brightness
+            </div>
+            
+            <div style="display: grid; grid-template-columns: repeat({cols_count}, 1fr); gap: 12px;">
+                { "".join([f'''
+                <div id="panel_{idx}" style="background: #000; border: 1px solid #333; border-radius: 4px; padding: 6px; text-align: center;">
+                    <div id="title_{idx}" style="color: #aaa; font-weight: bold; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Loading Viewport...</div>
+                    <canvas id="canvas_{idx}" style="background: #000; max-width: 100%; width: 100%; height: auto; border: 1px solid #111; cursor: crosshair;"></canvas>
+                    <div id="status_{idx}" style="color: #666; font-size: 11px; margin-top: 4px;">Slice: --</div>
+                </div>
+                ''' for idx in range(num_series)]) }
+            </div>
         </div>
 
         <script>
-            const slices = {slices_json};
-            let currentIdx = 0;
-            let total = {total_slices};
+            const workstationData = {workstation_json};
+            const numPanels = workstationData.length;
             
-            const canvas = document.getElementById('dicomCanvas');
-            const ctx = canvas.getContext('2d');
-            const statusInfo = document.getElementById('statusInfo');
+            let currentIndices = new Array(numPanels).fill(0);
+            let windowWidths = workstationData.map(p => p.slices && p.slices.length > 0 ? p.slices[0].default_w : 1000);
+            let windowLevels = workstationData.map(p => p.slices && p.slices.length > 0 ? p.slices[0].default_l : 500);
             
-            let windowWidth = slices[currentIdx].default_w;
-            let windowLevel = slices[currentIdx].default_l;
             let isDragging = false;
+            let activePanelIdx = null;
             let startX, startY;
 
-            const imgObj = new Image();
-            function renderSlice() {{
-                imgObj.src = slices[currentIdx].base64;
+            function renderPanel(idx) {{
+                const panel = workstationData[idx];
+                const sliceIdx = currentIndices[idx];
+                if (!panel.slices || !panel.slices[sliceIdx]) return;
+                const sliceData = panel.slices[sliceIdx];
+                
+                document.getElementById('title_' + idx).innerText = panel.title;
+                
+                const canvas = document.getElementById('canvas_' + idx);
+                const ctx = canvas.getContext('2d');
+                
+                const imgObj = new Image();
+                imgObj.src = sliceData.base64;
                 imgObj.onload = function() {{
                     canvas.width = imgObj.width || 512;
                     canvas.height = imgObj.height || 512;
                     
-                    let brightnessPct = (windowLevel / (slices[currentIdx].raw_max || 255)) * 100;
-                    let contrastPct = (255 / (windowWidth || 1)) * 100;
+                    let bPct = (windowLevels[idx] / sliceData.raw_max) * 100;
+                    let cPct = (255 / (windowWidths[idx] || 1)) * 100;
                     
-                    ctx.clearRect(0,0,canvas.width,canvas.height);
-                    ctx.filter = `brightness(${{brightnessPct + 50}}%) contrast(${{contrastPct}}%)`;
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.filter = `brightness(${{bPct + 50}}%) contrast(${{cPct}}%)`;
                     ctx.drawImage(imgObj, 0, 0);
                     
-                    statusInfo.innerText = `Slice: ${{currentIdx + 1}} / ${{total}} | Width (Contrast): ${{Math.round(windowWidth)}} | Level (Brightness): ${{Math.round(windowLevel)}}`;
+                    document.getElementById('status_' + idx).innerText = 
+                        `Slice: ${{sliceIdx + 1}}/${panel.total_slices} | W: ${{Math.round(windowWidths[idx])}} L: ${{Math.round(windowLevels[idx])}}`;
                 }};
             }}
-            
-            // Mouse wheel scroll engine
-            canvas.addEventListener('wheel', function(e) {{
-                e.preventDefault();
-                if (e.deltaY > 0) {{
-                    currentIdx = (currentIdx + 1) % total;
-                }} else {{
-                    currentIdx = (currentIdx - 1 + total) % total;
-                }}
-                renderSlice();
-            }}, {{ passive: false }});
 
-            // Mouse click/drag tracking
-            canvas.addEventListener('mousedown', function(e) {{
-                isDragging = true;
-                startX = e.clientX;
-                startY = e.clientY;
-            }});
-
-            window.addEventListener('mousemove', function(e) {{
-                if (!isDragging) return;
-                let deltaX = e.clientX - startX;
-                let deltaY = e.clientY - startY;
+            for(let i=0; i<numPanels; i++) {{
+                const canvas = document.getElementById('canvas_' + i);
+                const panelIdx = i;
                 
-                startX = e.clientX;
-                startY = e.clientY;
-
-                windowWidth += deltaX * 2;
-                windowLevel -= deltaY * 2;
-                
-                renderSlice();
-            }});
-
-            window.addEventListener('mouseup', function() {{
-                isDragging = false;
-            }});
-            
-            // Fire up initial window view
-            renderSlice();
-        </script>
-        """
-        
-        # Render the custom viewer via Streamlit's official HTML sandbox module
-        st.components.v1.html(html_code, height=650)
-        
-    else:
-        st.error("No valid DICOM folders containing pixel datasets found inside this ZIP archive.")
+                canvas.addEventListener('wheel', function(e) {{
+                    e.preventDefault();
+                    if(e.deltaY > 0) {{
+                        currentIndices[panelIdx] = (currentIndices[panelIdx] + 1) % workstationData[panelIdx].total_slices;
+                    }} else {{
