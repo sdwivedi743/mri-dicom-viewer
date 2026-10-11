@@ -1,5 +1,10 @@
 streamlit
-pydicom
+pydicom>=3.0.1,<4
 numpy
 scipy
 pillow
+# DICOM pixel-data codecs (separate from ZIP decompression)
+pyjpegls>=1.2
+pylibjpeg>=2.0
+pylibjpeg-libjpeg>=2.1
+pylibjpeg-openjpeg>=2.0

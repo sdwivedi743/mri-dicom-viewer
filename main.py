@@ -4,8 +4,7 @@ SD-DCM Clinical Workstation  -  Premium Medical Imaging Command Center
 Built according to international radiology workstation standards and clinical UX guidelines.
 
 Run:
-    pip install streamlit pydicom numpy scipy
-    pip install pylibjpeg pylibjpeg-libjpeg pylibjpeg-openjpeg
+    pip install -r requirements.txt
     streamlit run main.py
 """
 
@@ -234,8 +233,37 @@ def _floats(v, n):
     except Exception:
         return None
 
+def decode_pixels(ds):
+    """Use pydicom's automatic decoder selection; retain source pixel data."""
+    from pydicom.pixels import get_decoder
+    uid = getattr(getattr(ds, "file_meta", None), "TransferSyntaxUID", None)
+    if uid is None:
+        raise RuntimeError("Missing DICOM TransferSyntaxUID; the encoding cannot be determined safely.")
+    try:
+        decoder = get_decoder(uid)
+    except NotImplementedError as exc:
+        raise RuntimeError(f"Unsupported DICOM transfer syntax: {uid.name} ({uid}).") from exc
+    if not decoder.is_available:
+        packages = {
+            "1.2.840.10008.1.2.4.80": "pyjpegls>=1.2 (JPEG-LS)",
+            "1.2.840.10008.1.2.4.81": "pyjpegls>=1.2 (JPEG-LS)",
+            "1.2.840.10008.1.2.4.90": "pylibjpeg and pylibjpeg-openjpeg (JPEG 2000)",
+            "1.2.840.10008.1.2.4.91": "pylibjpeg and pylibjpeg-openjpeg (JPEG 2000)",
+        }
+        needed = packages.get(str(uid), "the matching DICOM pixel decoder")
+        raise RuntimeError(
+            f"Decoder unavailable for {uid.name} ({uid}). Install {needed} on the hosting server "
+            "using the updated requirements.txt, then rebuild/reboot the app. "
+            "Re-uploading or repacking the ZIP will not install the decoder."
+        )
+    try:
+        return np.asarray(ds.pixel_array)
+    except Exception as exc:
+        raise RuntimeError(f"Pixel decoding failed for {uid.name} ({uid}): {exc}") from exc
+
+
 def modality_frames(ds):
-    arr = np.asarray(ds.pixel_array)
+    arr = decode_pixels(ds)
     nfr = int(getattr(ds, "NumberOfFrames", 1) or 1)
     spp = int(getattr(ds, "SamplesPerPixel", 1) or 1)
     if spp == 3:
@@ -325,15 +353,20 @@ def read_zip(zbytes, max_member=400 * 1024 * 1024, progress=None):
     return out, skipped
 
 def build_payload_series(s, enhance, params, progress=None):
-    frames, errors = [], 0
-    for ds in s["items"]:
+    frames, errors = [], []
+    for index, ds in enumerate(s["items"], 1):
         try:
             frames += modality_frames(ds)
-        except Exception as e:
-            errors += 1
-            last = str(e)
+        except Exception as exc:
+            errors.append((index, str(exc)))
+    if errors:
+        index, reason = errors[0]
+        raise RuntimeError(
+            f"{len(errors)} of {len(s['items'])} DICOM instances could not be decoded "
+            f"(first failure: instance {index}). Series not displayed to avoid an incomplete stack. {reason}"
+        )
     if not frames:
-        raise RuntimeError("Could not decode pixel data (compressed DICOM needs: pip install pylibjpeg pylibjpeg-libjpeg pylibjpeg-openjpeg). Last error: " + (last if errors else "none"))
+        raise RuntimeError("Series contains no image frames.")
     a = s["items"][0]
     sp = _floats(getattr(a, "PixelSpacing", None) or [], 2) or [1.0, 1.0]
     info = series_info(frames)
