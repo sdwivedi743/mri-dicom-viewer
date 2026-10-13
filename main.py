@@ -93,6 +93,37 @@ def patch_baseline(img, bg_thr):
             vals.append(float(m[mask].mean()))
     return float(np.mean(vals)) if vals else 0.0
 
+def presentation_field(frames):
+    """Bounded image-derived shading estimate for display only, not prescan correction."""
+    fields = []
+    for frame in frames:
+        a = np.asarray(frame, dtype=np.float32)
+        finite = np.isfinite(a)
+        if not finite.all() or a.ndim != 2 or min(a.shape) < 16:
+            continue
+        low, high = np.percentile(a, [1, 99])
+        if high <= low:
+            continue
+        a = ndi.zoom(a, (64/a.shape[0], 64/a.shape[1]), order=1)
+        signal = np.maximum(a - low, 0)
+        mask = signal > .12 * (high - low)
+        if mask.mean() < .10:
+            continue
+        # Very broad, mask-normalized log field: fine tissue interfaces are excluded.
+        radius = max(a.shape) / 5.0
+        weights = ndi.gaussian_filter(mask.astype(np.float32), radius)
+        logs = ndi.gaussian_filter(np.log(np.maximum(signal, .12*(high-low))) * mask, radius)
+        field = logs / np.maximum(weights, 1e-6)
+        reference = float(np.median(field[mask]))
+        gain = np.exp(np.clip(.35*(reference-field), np.log(.85), np.log(1.18)))
+        gain = 1 + (gain-1)*np.clip((weights-.05)/.20, 0, 1)
+        small = ndi.zoom(gain, (32/a.shape[0], 32/a.shape[1]), order=1)
+        fields.append(small)
+    if not fields:
+        return None
+    return dict(rows=32, cols=32, gain=np.round(np.median(fields, axis=0), 4).ravel().tolist())
+
+
 def series_info(frames):
     n = len(frames)
     idxs = sorted({int(np.clip(round((i + 0.5) / min(5, n) * n - 0.5), 0, n - 1)) for i in range(min(5, n))})
@@ -109,7 +140,7 @@ def series_info(frames):
     sigma = float(np.median(sg)); fgv = float(np.median(fg))
     lo = min(0.0, float(min(los)))
     hi = max(float(np.median(his)) - 2 * sigma, lo + 1e-6)
-    return dict(sigma=sigma, pb=float(np.median(pb)), lo=lo, hi=hi, snr=(fgv / sigma if sigma > 0 else 100.0))
+    return dict(field=presentation_field([frames[i] for i in idxs]), sigma=sigma, pb=float(np.median(pb)), lo=lo, hi=hi, snr=(fgv / sigma if sigma > 0 else 100.0))
 
 def nlm25(slices, c, sigma, strength, patch_base=0.0, R=2, Rn=1):
     d = slices[c].astype(np.float32)
@@ -484,12 +515,19 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False):
     wc = _first(getattr(a, "WindowCenter", None)); ww = _first(getattr(a, "WindowWidth", None))
     slope = _first(getattr(a, "RescaleSlope", None), 1.0) or 1.0
     icpt = _first(getattr(a, "RescaleIntercept", None), 0.0) or 0.0
-    dicom_wl = [wc - ww / 2, wc + ww / 2] if (wc is not None and ww) else None
+    # DICOM LINEAR uses center-.5 and width-1 after modality scaling.
+    dicom_wl = [wc-.5-(ww-1)/2, wc-.5+(ww-1)/2] if (wc is not None and ww is not None and ww > 1 and np.isfinite([wc, ww]).all()) else None
+    description = str(getattr(a, "SeriesDescription", "") or getattr(a, "ProtocolName", "") or "").upper()
+    quantitative = any(t in description for t in ("ADC", "FA", "T1 MAP", "T2 MAP", "T2* MAP", "PERFUSION", "PHASE")) or str(getattr(a, "Modality", "")).upper() != "MR"
+    orientations = {tuple(np.round(_floats(getattr(d, "ImageOrientationPatient", None) or [], 6) or [], 4)) for d in s["items"]}
+    balanced_default = not quantitative and not cine_series(s)
+    field = info.get("field") if balanced_default and len(orientations) == 1 and () not in orientations and params.get("shading", 0) == 0 else None
     return dict(title=s["label"], modality=str(getattr(a, "Modality", "")).upper(), plane=plane_name(s["normal"]), rows=s["rows"], cols=s["cols"],
                 spacing=[float(sp[0]), float(sp[1])], memoryId=hashlib.sha256(f"{s['uid']}|{s['desc']}|{s['rows']}|{s['cols']}".encode()).hexdigest(), spacingKnown=bool(_floats(getattr(a, "PixelSpacing", None) or [], 2)), thickness=_first(getattr(a, "SliceThickness", None)), geometry=geometry, sequence=str(getattr(a, "SeriesDescription", "") or getattr(a, "ProtocolName", "") or ""),
                 invert=str(getattr(a, "PhotometricInterpretation", "")).upper() == "MONOCHROME1",
                 pos=pos, hasEnh=bool(enh), streamed=streamed, snr=round(info["snr"], 1), sigma=info["sigma"],
-                wl=dict(auto=[info["lo"], info["hi"]], dicom=dicom_wl, full=[source_min, source_max]),
+                presentation=dict(default="balanced" if balanced_default else "dicom" if dicom_wl else "auto", field=field, base=info["lo"]),
+                wl=dict(balanced=dicom_wl or [info["lo"], info["hi"]], auto=[info["lo"], info["hi"]], dicom=dicom_wl, full=[source_min, source_max]),
                 **packed)
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -569,7 +607,7 @@ const catalog=P.series;
 P.series=Array.from({length:16},(_,i)=>i<Math.min(4,catalog.length)?catalog[i]:null);
 const PH=__PANEL_H__, N=16;
 let layoutRows=2,layoutCols=2,expandedViewport=null,expandedLayout=null;
-const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),lo:s.wl.auto[0],hi:s.wl.auto[1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null,ctLike:false,ctContrast:1.25,ctSharp:.25,ctRestore:null});});
+const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null,ctLike:false,ctContrast:1.25,ctSharp:.25,ctRestore:null});});
 const opt={sync:true,link:false,tool:'wl',overlays:true,refs:true,viewLink:false};
 function seriesKey(s){return s.memoryId||String(catalog.indexOf(s));}
 const displayMemory=new Map();let memoryTimer;
@@ -713,6 +751,19 @@ function ctDisplay(gray,w,h,amount){
  }
  return out;
 }
+function presentationValue(s,st,value,x,y){
+ if(st.wl!=='balanced'||st.ctLike)return value;
+ const f=s.presentation?.field;if(!f)return value;
+ const fx=x/Math.max(1,s.cols-1)*(f.cols-1),fy=y/Math.max(1,s.rows-1)*(f.rows-1),ix=Math.floor(fx),iy=Math.floor(fy),tx=fx-ix,ty=fy-iy;
+ const at=(xx,yy)=>f.gain[Math.min(f.rows-1,yy)*f.cols+Math.min(f.cols-1,xx)];
+ const gain=(1-ty)*((1-tx)*at(ix,iy)+tx*at(ix+1,iy))+ty*((1-tx)*at(ix,iy+1)+tx*at(ix+1,iy+1));
+ const base=s.presentation.base;return base+Math.max(0,value-base)*gain;
+}
+function presentationGray(s,st,value,x,y){
+ const corrected=presentationValue(s,st,value,x,y),normal=Math.max(0,Math.min(1,(corrected-st.lo)/Math.max(1e-9,st.hi-st.lo)));
+ // Gentle midtone lift, exact black/white endpoints, stable for the whole series.
+ return 255*(st.wl==='balanced'&&!st.ctLike?Math.pow(normal,.94):normal);
+}
 async function draw(i){
   const s=P.series[i],st=S[i];if(!s||st.panel.hidden)return;const tok=++st.tok;
   const useEnh=!st.ctLike&&st.enh&&s.hasEnh,data=await getFrame(i,st.idx,useEnh);
@@ -720,7 +771,7 @@ async function draw(i){
   const w=s.cols,h=s.rows,oc=st.oc||(st.oc=$('canvas'));oc.width=w;oc.height=h;
   const octx=oc.getContext('2d'),img=octx.createImageData(w,h),px=img.data;
   const rng=Math.max(1e-9,st.hi-st.lo),a=255*s.scale/rng,b=255*(s.off-st.lo)/rng,inv=st.inv;
-  for(let k=0,j=0;k<data.length;k++,j+=4){let g=a*data[k]+b;g=g<0?0:g>255?255:g;if(inv)g=255-g;px[j]=px[j+1]=px[j+2]=g;px[j+3]=255;}
+  for(let k=0,j=0;k<data.length;k++,j+=4){let g=presentationGray(s,st,val(s,data[k]),k%w,Math.floor(k/w));if(inv)g=255-g;px[j]=px[j+1]=px[j+2]=g;px[j+3]=255;}
   if(st.ctLike){
     const gray=new Float32Array(w*h);
     for(let k=0;k<gray.length;k++){const normal=Math.max(0,Math.min(1,(val(s,data[k])-st.lo)/rng));gray[k]=255*Math.pow(1-normal,st.ctContrast);}
@@ -759,7 +810,7 @@ async function draw(i){
   if(i===hover){refreshOverlays();updateActiveSummary();}
   if(i===hover||!P.series.some((other,j)=>j!==i&&other===s&&!S[j].panel.hidden))rememberSeries(i);
   st.stat.textContent='Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+(geom(i)?' · Loc: '+s.pos[st.idx].toFixed(1)+'mm':' · Position unavailable')+' · W: '+Math.round(st.hi-st.lo)+' L: '+Math.round((st.hi+st.lo)/2)+
-    ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(st.ctLike?' [CT-like display · MRI source · experimental]':s.hasEnh?(useEnh?' [ENHANCED]':' [ORIGINAL]'):'');
+    ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(st.wl==='balanced'&&!st.ctLike?' [BALANCED DISPLAY'+(s.presentation?.field?' · shading corrected':'')+']':'')+(st.ctLike?' [CT-like display · MRI source · experimental]':s.hasEnh?(useEnh?' [ENHANCED]':' [ORIGINAL]'):'');
 }
 
 const drawAll=()=>{for(let i=0;i<N;i++)draw(i);};
@@ -780,8 +831,8 @@ function setIdx(i,v,fromSync){
   drawAll();
 }
 
-function resetView(i){const s=P.series[i],st=S[i];if(!s)return;st.zoom=1;st.px=st.py=0;st.lo=s.wl.auto[0];st.hi=s.wl.auto[1];updateView(i,true);}
-function preset(i,name){const s=P.series[i],st=S[i],w=s.wl[name]||s.wl.auto;st.lo=w[0];st.hi=w[1];draw(i);}
+function resetView(i){const s=P.series[i],st=S[i];if(!s)return;st.zoom=1;st.px=st.py=0;st.wl=s.presentation?.default||'auto';const w=s.wl[st.wl];st.lo=w[0];st.hi=w[1];st.syncDisplayUI?.();updateView(i,true);}
+function preset(i,name){const s=P.series[i],st=S[i],w=s.wl[name]||s.wl.auto;st.wl=name;st.lo=w[0];st.hi=w[1];draw(i);}
 
 function angleDegrees(s,m){
  if(m.x3===undefined)return null;
@@ -949,10 +1000,10 @@ P.series.forEach((item,i)=>{
   st.cv=cv;st.stat=stat;st.panel=pnl;pnl.hidden=i>=4;
   
   const sel=$('select');
-  ['auto','dicom','full'].forEach(n=>{
-    if(n!=='dicom'||s.wl.dicom)sel.append($('option',{value:n,textContent:{auto:'W/L Auto',dicom:'W/L DICOM',full:'W/L Full'}[n]}));
+  ['balanced','auto','dicom','full'].forEach(n=>{
+    if(n!=='dicom'||s.wl.dicom)sel.append($('option',{value:n,textContent:{balanced:'Balanced display',auto:'W/L Auto',dicom:'W/L DICOM',full:'W/L Full'}[n]}));
   });
-  sel.onchange=()=>preset(i,sel.value);
+  sel.value=st.wl;sel.title='Balanced: stable grayscale with gentle, bounded image-derived shading. Auto/DICOM/Full: linear display.';sel.onchange=()=>preset(i,sel.value);
   
   const bEnh=$('button',{textContent:'Enhance'}),bInv=$('button',{textContent:'Invert'}),bRst=$('button',{textContent:'Reset'}),bPlay=$('button',{textContent:'▶ Cine'});
   bEnh.className=st.enh?'on':'';bEnh.style.display=s.hasEnh?'':'none';
@@ -970,9 +1021,9 @@ P.series.forEach((item,i)=>{
   function leaveCT(){if(!st.ctLike)return;Object.assign(st,st.ctRestore);st.ctLike=false;st.ctRestore=null;bCT.className='';settings.hidden=true;bOriginal.hidden=true;bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';}
   bCT.disabled=s.modality!=='MR';bCT.onclick=()=>{
     if(st.ctLike){leaveCT();draw(i);return;}
-    st.ctRestore={lo:st.lo,hi:st.hi,inv:st.inv,enh:st.enh};st.lo=s.wl.auto[0];st.hi=s.wl.auto[1];st.ctLike=true;bCT.className='on';settings.hidden=false;bOriginal.hidden=false;draw(i);
+    st.ctRestore={wl:st.wl,lo:st.lo,hi:st.hi,inv:st.inv,enh:st.enh};st.lo=s.wl.auto[0];st.hi=s.wl.auto[1];st.ctLike=true;bCT.className='on';settings.hidden=false;bOriginal.hidden=false;draw(i);
   };
-  bOriginal.onclick=()=>{leaveCT();st.enh=false;st.inv=!!s.invert;bEnh.className='';bInv.className=st.inv?'on':'';draw(i);};
+  bOriginal.onclick=()=>{leaveCT();preset(i,s.wl.dicom?'dicom':'auto');sel.value=st.wl;st.enh=false;st.inv=!!s.invert;bEnh.className='';bInv.className=st.inv?'on':'';draw(i);};
   [['Contrast','ctContrast',.7,1.8,.05],['Edge emphasis','ctSharp',0,.5,.05]].forEach(([label,key,min,max,step])=>{const slider=$('input',{type:'range',min,max,step,value:st[key],ariaLabel:label});slider.oninput=()=>{st[key]=Number(slider.value);draw(i);};settings.append($('label',null,[document.createTextNode(label),slider]));});
   settings.style.cssText='font-size:10px;color:#91bdd4';
   st.togEnh=()=>bEnh.onclick();st.togInv=()=>bInv.onclick();st.togPlay=()=>bPlay.onclick();
@@ -981,17 +1032,17 @@ P.series.forEach((item,i)=>{
   const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
   st.clear=()=>{stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover)updateActiveSummary();};
   st.displayConfig=()=>({wl:sel.value,inv:st.inv,enh:st.enh,ctLike:st.ctLike,ctContrast:st.ctContrast,ctSharp:st.ctSharp});
-  st.applyDisplay=c=>{sel.value=['auto','dicom','full'].includes(c.wl)&&s.wl[c.wl]?c.wl:'auto';preset(i,sel.value);st.inv=!!c.inv;st.enh=!!c.enh&&s.hasEnh;bInv.className=st.inv?'on':'';bEnh.className=st.enh?'on':'';if(c.ctLike&&s.modality==='MR'){st.ctContrast=Math.max(.7,Math.min(1.8,Number(c.ctContrast)||1.25));st.ctSharp=Math.max(0,Math.min(.5,Number(c.ctSharp)||0));settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;bCT.onclick();}draw(i);};
+  st.applyDisplay=c=>{sel.value=['balanced','auto','dicom','full'].includes(c.wl)&&s.wl[c.wl]?c.wl:'auto';preset(i,sel.value);st.inv=!!c.inv;st.enh=!!c.enh&&s.hasEnh;bInv.className=st.inv?'on':'';bEnh.className=st.enh?'on':'';if(c.ctLike&&s.modality==='MR'){st.ctContrast=Math.max(.7,Math.min(1.8,Number(c.ctContrast)||1.25));st.ctSharp=Math.max(0,Math.min(.5,Number(c.ctSharp)||0));settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;bCT.onclick();}draw(i);};
   st.syncDisplayUI=()=>{sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;bOriginal.hidden=!st.ctLike;settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
   st.assign=(index)=>{
     if(P.series[i]===catalog[index]){activate(i);return;}
     stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
     st.tok++;s=catalog[index];P.series[i]=s;
-    Object.assign(st,{idx:Math.floor(s.pos.length/2),lo:s.wl.auto[0],hi:s.wl.auto[1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null,matchPoint:null,ctLike:false,ctRestore:null});
+    Object.assign(st,{idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null,matchPoint:null,ctLike:false,ctRestore:null});
     const restored=restoredState(index);if(restored)Object.assign(st,restored);
     pnl.querySelector('.ttl').textContent=s.title+(s.hasEnh?' · SNR:'+s.snr:'');
-    sel.replaceChildren();['auto','dicom','full'].forEach(n=>{if(n!=='dicom'||s.wl.dicom)sel.append($('option',{value:n,textContent:'W/L '+n}));});
-    bCT.disabled=s.modality!=='MR';bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;if(restored)st.syncDisplayUI();activate(i);draw(i);
+    sel.replaceChildren();['balanced','auto','dicom','full'].forEach(n=>{if(n!=='dicom'||s.wl.dicom)sel.append($('option',{value:n,textContent:n==='balanced'?'Balanced display':'W/L '+n}));});
+    bCT.disabled=s.modality!=='MR';bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;st.syncDisplayUI();activate(i);draw(i);
   };
   const initialIndex=catalog.indexOf(item),initial=initialIndex>=0?restoredState(initialIndex):null;if(initial){Object.assign(st,initial);st.syncDisplayUI();}
   pnl.ondragover=e=>{if(e.dataTransfer.types.includes('application/x-dicom-series')){e.preventDefault();e.dataTransfer.dropEffect='copy';pnl.classList.add('drop-target');}};
@@ -1280,7 +1331,7 @@ def main():
     sb.divider()
     sb.caption("PROCESSING")
     enhance = sb.toggle("Enable enhancement", value=True,
-                        help="Creates a processed version. Use Enhance in each viewport to compare with the original.")
+                        help="Creates denoised/detail-enhanced pixels where available. Balanced display works independently; choose W/L Auto or DICOM for linear presentation.")
     with sb.expander("Enhancement settings", expanded=False):
         preset = st.selectbox("Preset", list(PRESETS) + ["Custom Parameters"], index=1,
                               disabled=not enhance)
