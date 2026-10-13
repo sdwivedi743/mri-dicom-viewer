@@ -8,6 +8,8 @@ Run:
     streamlit run main.py
 """
 
+from dataclasses import dataclass
+import re
 import base64
 import hashlib
 import logging
@@ -36,11 +38,118 @@ PRESETS = {
     "Natural":  dict(denoise=25, detail=75, sharpen=60, grain=15, shading=0),
     "Balanced": dict(denoise=35, detail=65, sharpen=55, grain=12, shading=0),
     "Strong":   dict(denoise=60, detail=45, sharpen=45, grain=6,  shading=0),
+    "Adaptive MRI · Gentle (experimental)": dict(algorithm="adaptive", strength="gentle", restore_detail=True, shading=0),
+    "Adaptive MRI · Detail (experimental)": dict(algorithm="adaptive", strength="moderate", restore_detail=True, shading=0),
+    "Adaptive MRI · Noise-first (experimental)": dict(algorithm="adaptive", strength="moderate", restore_detail=False, shading=0),
 }
 
 # ----------------------------------------------------------------------------------------------------------------
 #  Core Image-Processing & Enhancement Routines (Preserved with absolute data integrity)
 # ----------------------------------------------------------------------------------------------------------------
+@dataclass
+class NoiseEstimate:
+    sigma: np.ndarray
+    confidence: float
+    valid_tiles: int
+
+def estimate_local_noise(image, tile=32):
+    a=np.asarray(image,dtype=np.float32)
+    if a.ndim!=2 or min(a.shape)<16 or not np.isfinite(a).all() or np.min(a)<0:
+        raise ValueError('Expected a finite, nonnegative native 2D magnitude image of at least 16×16 pixels')
+    high=float(np.percentile(a,99.5));extent=float(np.max(a)-np.min(a))
+    if extent<=0 or high<=0:return NoiseEstimate(np.zeros_like(a),0.,0)
+    # Unit-energy diagonal high-pass; robust MAD estimates high-SNR magnitude noise.
+    # No assumption that zero-filled air is a sampled Rayleigh background.
+    hh=(a[:-1,:-1]-a[1:,:-1]-a[:-1,1:]+a[1:,1:])/2
+    minimum=np.minimum.reduce([a[:-1,:-1],a[1:,:-1],a[:-1,1:],a[1:,1:]])
+    tissue=minimum>.08*high
+    rows=(hh.shape[0]+tile-1)//tile;cols=(hh.shape[1]+tile-1)//tile
+    grid=np.full((rows,cols),np.nan,dtype=np.float32);counts=[]
+    for y in range(rows):
+        for x in range(cols):
+            v=hh[y*tile:(y+1)*tile,x*tile:(x+1)*tile];mask=tissue[y*tile:(y+1)*tile,x*tile:(x+1)*tile];values=v[mask]
+            # Sample air only if it actually contains measured, nonzero noise.
+            # A zero-filled background is not evidence of zero physical noise.
+            region=a[y*tile:min((y+1)*tile,a.shape[0]-1),x*tile:min((x+1)*tile,a.shape[1]-1)]
+            positive=minimum[y*tile:(y+1)*tile,x*tile:(x+1)*tile]>0
+            observed=v[positive]
+            divisor=.67448975
+            if len(observed)>=48:
+                raw_mad=float(np.median(np.abs(observed-np.median(observed))))
+                if raw_mad>0 and float(np.median(region[positive]))/(raw_mad/.67448975)<2.4:
+                    values=observed
+                    # MAD of the unit-energy HH of independent Rayleigh samples:
+                    # 0.438 sigma (fixed-seed calibration, independent of MRI tests).
+                    divisor=.438
+            if len(values)<48:continue
+            mad=float(np.median(np.abs(values-np.median(values))))/divisor
+            if mad>0 and np.isfinite(mad):grid[y,x]=mad;counts.append(len(values))
+    valid=np.isfinite(grid);n=int(valid.sum())
+    if n==0:return NoiseEstimate(np.zeros_like(a),0.,0)
+    # Fill unobserved tiles from nearest observed tissue, then interpolate smoothly.
+    nearest=ndi.distance_transform_edt(~valid,return_distances=False,return_indices=True);grid=grid[tuple(nearest)]
+    median=float(np.median(grid));grid=np.clip(grid,.25*median,3*median)
+    grid=ndi.gaussian_filter(grid,.7,mode='nearest')
+    yy=(np.arange(a.shape[0])+.5)/tile-.5;xx=(np.arange(a.shape[1])+.5)/tile-.5
+    Y,X=np.meshgrid(yy,xx,indexing='ij');sigma=ndi.map_coordinates(grid,[Y,X],order=1,mode='nearest').astype(np.float32)
+    confidence=float(min(1.,sum(counts)/max(1,int(tissue.sum())))*min(1.,n/4))
+    return NoiseEstimate(sigma,confidence,n)
+
+def shifted(a,dy,dx):
+    h,w=a.shape;p=np.pad(a,((abs(dy),abs(dy)),(abs(dx),abs(dx))),mode='reflect')
+    return p[abs(dy)+dy:abs(dy)+dy+h,abs(dx)+dx:abs(dx)+dx+w]
+
+def denoise_magnitude(image, strength='moderate', sigma=None, restore_detail=True):
+    a=np.asarray(image,dtype=np.float32)
+    estimate=estimate_local_noise(a)
+    if strength not in ('gentle','moderate'):raise ValueError('strength must be gentle or moderate')
+    if sigma is None:
+        sg=estimate.sigma
+        if estimate.confidence<.35 or not np.any(sg>0):return a.copy(),{'status':'original: insufficient noise-estimation support','confidence':estimate.confidence}
+    else:
+        sg=np.broadcast_to(np.asarray(sigma,dtype=np.float32),a.shape).copy()
+        if not np.isfinite(sg).all() or np.min(sg)<=0:raise ValueError('sigma must be positive and finite')
+    var=sg*sg;h,w=a.shape;acc=np.zeros_like(a);ws=np.zeros_like(a);best=np.zeros_like(a)
+    search=4;bandwidth=.65 if strength=='gentle' else .85
+    for dy in range(-search,search+1):
+        for dx in range(-search,search+1):
+            if dy==0 and dx==0:continue
+            b=shifted(a,dy,dx);v=shifted(var,dy,dx);expected=var+v
+            # Whiten patch differences using both local variance estimates.
+            normalized=(a-b)**2/np.maximum(expected,1e-12)
+            distance=ndi.uniform_filter(normalized,3,mode='reflect')
+            weight=np.exp(-np.maximum(distance-1.,0.)/(bandwidth**2)).astype(np.float32)
+            valid=np.zeros_like(a,dtype=bool);valid[max(0,-dy):min(h,h-dy),max(0,-dx):min(w,w-dx)]=True;weight*=valid
+            # E[M²]=S²+2sigma² for the single-coil Rician magnitude model.
+            # Multi-coil/correlated noise violates this approximation and needs validation.
+            acc+=weight*(b*b-2*v);ws+=weight;best=np.maximum(best,weight)
+    self_weight=np.maximum(best,.05);den=np.sqrt(np.maximum((acc+self_weight*(a*a-2*var))/np.maximum(ws+self_weight,1e-12),0))
+    # Retain more source signal at coherent edges; estimate edges after slight smoothing.
+    smooth=ndi.gaussian_filter(a,.9);gy,gx=np.gradient(smooth);edge=np.hypot(gx,gy)/np.maximum(sg,1e-6)
+    protect=np.clip((edge-.35)/1.4,0,1);protect=protect*protect*(3-2*protect)
+    blend=(.30 if strength=='gentle' else .12)+(.45 if strength=='gentle' else .53)*protect
+    out=den+blend*(a-den)
+    if restore_detail:
+        # Restore coherent source residuals, without creating edges from an external prior.
+        # Two scales distinguish thin features from slowly varying low-contrast signal.
+        residual=a-out
+        foreground=np.clip((smooth/np.maximum(sg,1e-6)-2.5)/2.,0,1)
+        correction=np.zeros_like(a)
+        for radius,amount in ((.65,.55),(2.5,.65)):
+            remaining=residual-correction
+            coherent=ndi.gaussian_filter(remaining,radius)
+            # Approximate standard deviation of smoothed independent noise; not calibrated
+            # for correlated vendor reconstruction. Soft threshold avoids restoring all grain.
+            impulse=np.zeros((17,17),np.float32);impulse[8,8]=1
+            noise_factor=float(np.sqrt(np.sum(ndi.gaussian_filter(impulse,radius)**2)))
+            threshold=.35*sg*noise_factor
+            signal=np.sign(coherent)*np.maximum(np.abs(coherent)-threshold,0)
+            correction+=amount*signal*foreground
+        out+=correction
+    # Finite positive output; do not invent a larger dynamic range through sharpening.
+    out=np.clip(out,0,float(a.max())).astype(np.float32)
+    return out,{'status':'processed','strength':strength,'confidence':estimate.confidence,'valid_tiles':estimate.valid_tiles,'sigma_median':float(np.median(sg)),'sigma_min':float(sg.min()),'sigma_max':float(sg.max()),'noise_model':'high-SNR MAD estimate; approximate Rician moment correction','detail_restoration':bool(restore_detail),'source':'oracle sigma' if sigma is not None else 'automatic local estimate'}
+
 def estimate_noise(img):
     img = np.asarray(img, np.float32)
     mn, mx = float(img.min()), float(img.max())
@@ -459,7 +568,29 @@ def read_zip(zbytes, max_member=400 * 1024 * 1024, progress=None):
                 progress(n / max(1, len(infos)))
     return out, skipped
 
-def build_payload_series(s, enhance, params, progress=None, force_stream=False):
+def quantitative_series(ds):
+    text = " ".join([str(getattr(ds, "SeriesDescription", "")), str(getattr(ds, "ProtocolName", "")), " ".join(str(v) for v in getattr(ds, "ImageType", []))]).upper()
+    return bool(re.search(r"\b(?:ADC|FA|CBF|CBV|MTT|TTP|PARAMETRIC|PERFUSION|PHASE)\b|T[12]\s*\*?\s*MAP|R[12]\s*\*?\s*MAP", text)
+                or hasattr(ds, "RealWorldValueMappingSequence")
+                or str(getattr(ds, "ComplexImageComponent", "")).upper() in ("PHASE", "REAL", "IMAGINARY"))
+
+
+def adaptive_series_reason(s):
+    for ds in s["items"]:
+        if str(getattr(ds, "Modality", "")).upper() != "MR":
+            return "Adaptive MRI is available for magnitude MR images only"
+        if str(getattr(ds, "PhotometricInterpretation", "")).upper() not in ("MONOCHROME1", "MONOCHROME2"):
+            return "Unsupported pixel presentation for adaptive MRI"
+        if min(int(getattr(ds, "Rows", 0)), int(getattr(ds, "Columns", 0))) < 16:
+            return "Image matrix too small for adaptive noise estimation"
+        if quantitative_series(ds):
+            return "Quantitative or phase series: original pixels retained"
+    if cine_series(s):
+        return "Dynamic/cine series: adaptive MRI has not been evaluated"
+    return None
+
+
+def build_payload_series(s, enhance, params, progress=None, force_stream=False, enhance_requested=None):
     streamed = force_stream or cine_series(s) or payload_estimate(s, enhance) > 24*1024*1024
     if payload_estimate(s, False) > 2*1024*1024*1024:
         raise RuntimeError("This series exceeds the current decoded-workload limit. It was not partially loaded.")
@@ -481,12 +612,36 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False):
     a = s["items"][0]
     sp = _floats(getattr(a, "PixelSpacing", None) or [], 2) or [1.0, 1.0]
     enh = None
-    if enhance and not streamed and info["sigma"] > 0:
+    adaptive = params.get("algorithm") == "adaptive"
+    frame_states = []
+    reason = adaptive_series_reason(s) if adaptive else None
+    if not enhance:
+        reason = "Original pixels: workspace processing limit" if enhance_requested else "Enhancement disabled"
+    elif streamed:
+        reason = reason or "Original pixels: streamed-series processing limit"
+    elif adaptive and source_min < 0:
+        reason = "Signed intensity data: original pixels retained"
+    elif not adaptive and info["sigma"] <= 0:
+        reason = "Original pixels: no reliable global noise estimate"
+    if enhance and not streamed and not reason:
         enh = []
         for k in range(len(frames)):
-            enh.append(enhance_frame(frames, k, info, params))
+            if adaptive:
+                processed, status = denoise_magnitude(frames[k], params.get("strength", "gentle"),
+                                                     restore_detail=params.get("restore_detail", True))
+                frame_states.append("processed" if status["status"] == "processed" else "original: insufficient noise support")
+                enh.append(processed)
+            else:
+                enh.append(enhance_frame(frames, k, info, params))
+                frame_states.append("processed")
             if progress:
                 progress((k + 1) / len(frames))
+        if not any(state == "processed" for state in frame_states):
+            enh = None
+            reason = "Original pixels: insufficient local noise support"
+    applied = sum(state == "processed" for state in frame_states)
+    processing = dict(engine="Adaptive MRI v0.3 · experimental" if adaptive else "Classic enhancement",
+                      reason=reason, applied=applied, frames=frame_states)
     # Single-frame geometry only; do not invent positions for enhanced multi-frame objects.
     geometry = []
     for ds in s["items"]:
@@ -518,14 +673,14 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False):
     # DICOM LINEAR uses center-.5 and width-1 after modality scaling.
     dicom_wl = [wc-.5-(ww-1)/2, wc-.5+(ww-1)/2] if (wc is not None and ww is not None and ww > 1 and np.isfinite([wc, ww]).all()) else None
     description = str(getattr(a, "SeriesDescription", "") or getattr(a, "ProtocolName", "") or "").upper()
-    quantitative = any(t in description for t in ("ADC", "FA", "T1 MAP", "T2 MAP", "T2* MAP", "PERFUSION", "PHASE")) or str(getattr(a, "Modality", "")).upper() != "MR"
+    quantitative = quantitative_series(a) or str(getattr(a, "Modality", "")).upper() != "MR"
     orientations = {tuple(np.round(_floats(getattr(d, "ImageOrientationPatient", None) or [], 6) or [], 4)) for d in s["items"]}
     balanced_default = not quantitative and not cine_series(s)
     field = info.get("field") if balanced_default and len(orientations) == 1 and () not in orientations and params.get("shading", 0) == 0 else None
     return dict(title=s["label"], modality=str(getattr(a, "Modality", "")).upper(), plane=plane_name(s["normal"]), rows=s["rows"], cols=s["cols"],
                 spacing=[float(sp[0]), float(sp[1])], memoryId=hashlib.sha256(f"{s['uid']}|{s['desc']}|{s['rows']}|{s['cols']}".encode()).hexdigest(), spacingKnown=bool(_floats(getattr(a, "PixelSpacing", None) or [], 2)), thickness=_first(getattr(a, "SliceThickness", None)), geometry=geometry, sequence=str(getattr(a, "SeriesDescription", "") or getattr(a, "ProtocolName", "") or ""),
                 invert=str(getattr(a, "PhotometricInterpretation", "")).upper() == "MONOCHROME1",
-                pos=pos, hasEnh=bool(enh), streamed=streamed, snr=round(info["snr"], 1), sigma=info["sigma"],
+                pos=pos, hasEnh=bool(enh), processing=processing, streamed=streamed, snr=round(info["snr"], 1), sigma=info["sigma"],
                 presentation=dict(default="balanced" if balanced_default else "dicom" if dicom_wl else "auto", field=field, base=info["lo"]),
                 wl=dict(balanced=dicom_wl or [info["lo"], info["hi"]], auto=[info["lo"], info["hi"]], dicom=dicom_wl, full=[source_min, source_max]),
                 **packed)
@@ -810,7 +965,7 @@ async function draw(i){
   if(i===hover){refreshOverlays();updateActiveSummary();}
   if(i===hover||!P.series.some((other,j)=>j!==i&&other===s&&!S[j].panel.hidden))rememberSeries(i);
   st.stat.textContent='Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+(geom(i)?' · Loc: '+s.pos[st.idx].toFixed(1)+'mm':' · Position unavailable')+' · W: '+Math.round(st.hi-st.lo)+' L: '+Math.round((st.hi+st.lo)/2)+
-    ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(st.wl==='balanced'&&!st.ctLike?' [BALANCED DISPLAY'+(s.presentation?.field?' · shading corrected':'')+']':'')+(st.ctLike?' [CT-like display · MRI source · experimental]':s.hasEnh?(useEnh?' [ENHANCED]':' [ORIGINAL]'):'');
+    ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(st.wl==='balanced'&&!st.ctLike?' [BALANCED DISPLAY'+(s.presentation?.field?' · shading corrected':'')+']':'')+(st.ctLike?' [CT-like display · MRI source · experimental]':useEnh?' ['+s.processing.engine+' · '+(s.processing.frames[st.idx]||'processed')+']':' [ORIGINAL'+(s.processing?.reason?' · '+s.processing.reason:'')+']');
 }
 
 const drawAll=()=>{for(let i=0;i<N;i++)draw(i);};
@@ -1007,7 +1162,7 @@ P.series.forEach((item,i)=>{
   
   const bEnh=$('button',{textContent:'Enhance'}),bInv=$('button',{textContent:'Invert'}),bRst=$('button',{textContent:'Reset'}),bPlay=$('button',{textContent:'▶ Cine'});
   bEnh.className=st.enh?'on':'';bEnh.style.display=s.hasEnh?'':'none';
-  bEnh.onclick=()=>{leaveCT();st.enh=!st.enh;bEnh.className=st.enh?'on':'';draw(i);};
+  bEnh.title=s.processing?.engine||'Enhancement';bEnh.onclick=()=>{leaveCT();st.enh=!st.enh;bEnh.className=st.enh?'on':'';draw(i);};
   bInv.onclick=()=>{leaveCT();st.inv=!st.inv;bInv.className=st.inv?'on':'';draw(i);};bInv.className=st.inv?'on':'';
   bRst.onclick=()=>resetView(i);
   bPlay.onclick=()=>{
@@ -1027,7 +1182,7 @@ P.series.forEach((item,i)=>{
   [['Contrast','ctContrast',.7,1.8,.05],['Edge emphasis','ctSharp',0,.5,.05]].forEach(([label,key,min,max,step])=>{const slider=$('input',{type:'range',min,max,step,value:st[key],ariaLabel:label});slider.oninput=()=>{st[key]=Number(slider.value);draw(i);};settings.append($('label',null,[document.createTextNode(label),slider]));});
   settings.style.cssText='font-size:10px;color:#91bdd4';
   st.togEnh=()=>bEnh.onclick();st.togInv=()=>bInv.onclick();st.togPlay=()=>bPlay.onclick();
-  pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,bRst,bPlay,settings]),cv,stat);
+  pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh&&!s.processing?.engine?.startsWith('Adaptive')?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,bRst,bPlay,settings]),cv,stat);
   grid.append(pnl);
   const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
   st.clear=()=>{stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover)updateActiveSummary();};
@@ -1040,9 +1195,9 @@ P.series.forEach((item,i)=>{
     st.tok++;s=catalog[index];P.series[i]=s;
     Object.assign(st,{idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null,matchPoint:null,ctLike:false,ctRestore:null});
     const restored=restoredState(index);if(restored)Object.assign(st,restored);
-    pnl.querySelector('.ttl').textContent=s.title+(s.hasEnh?' · SNR:'+s.snr:'');
+    pnl.querySelector('.ttl').textContent=s.title+(s.hasEnh&&!s.processing?.engine?.startsWith('Adaptive')?' · SNR:'+s.snr:'');
     sel.replaceChildren();['balanced','auto','dicom','full'].forEach(n=>{if(n!=='dicom'||s.wl.dicom)sel.append($('option',{value:n,textContent:n==='balanced'?'Balanced display':'W/L '+n}));});
-    bCT.disabled=s.modality!=='MR';bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;st.syncDisplayUI();activate(i);draw(i);
+    bEnh.title=s.processing?.engine||'Enhancement';bCT.disabled=s.modality!=='MR';bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;st.syncDisplayUI();activate(i);draw(i);
   };
   const initialIndex=catalog.indexOf(item),initial=initialIndex>=0?restoredState(initialIndex):null;if(initial){Object.assign(st,initial);st.syncDisplayUI();}
   pnl.ondragover=e=>{if(e.dataTransfer.types.includes('application/x-dicom-series')){e.preventDefault();e.dataTransfer.dropEffect='copy';pnl.classList.add('drop-target');}};
@@ -1346,6 +1501,8 @@ def main():
             )
         else:
             params = dict(PRESETS[preset])
+        if params.get("algorithm") == "adaptive":
+            st.caption("Experimental adaptive magnitude-MRI denoising. Compare using Enhance in the viewport. ROI values use original pixels. Dynamic/quantitative series and unsupported intensity data retain original pixels.")
     show_ids = sb.checkbox("Show patient identifiers", value=False,
                            help="Identifiers are hidden in the viewer by default. This does not anonymize the uploaded files.")
     sb.divider()
@@ -1432,7 +1589,7 @@ def main():
         logging.getLogger("dicom_viewer").warning("DICOM series prepare: index=%s frames=%s estimated_original_bytes=%s cine=%s", idx, frame_count(s), payload_estimate(s), cine_series(s))
         try:
             progress_bar.progress(0.15 + 0.85 * idx / len(chosen), text=f"Preparing series {idx + 1}/{len(chosen)}: {s['desc']}...")
-            prepared = build_payload_series(s, study_enhance, params, force_stream=original_estimate > 64*1024*1024,
+            prepared = build_payload_series(s, study_enhance, params, enhance_requested=enhance, force_stream=original_estimate > 64*1024*1024,
                 progress=lambda fraction, current=idx: progress_bar.progress(
                     0.15 + 0.85 * (current + fraction) / len(chosen),
                     text=f"Preparing series {current + 1}/{len(chosen)}..."))
@@ -1455,6 +1612,9 @@ def main():
         
     if any(p.get("streamed") for p in payloads) and enhance:
         sb.caption("Cine/large series use original pixels and frame-by-frame loading; enhancement is skipped.")
+    if params.get("algorithm") == "adaptive":
+        applied = sum(p.get("processing", {}).get("applied", 0) for p in payloads)
+        sb.caption(f"Adaptive MRI: {applied} of {sum(len(p['items']) for p in payloads)} loaded images processed. Check each viewport status for originals or skipped images.")
     # Patient Demographics Banner Customization
     patient = None
     if show_ids:
