@@ -8,3 +8,6 @@ pyjpegls>=1.2
 pylibjpeg>=2.0
 pylibjpeg-libjpeg>=2.1
 pylibjpeg-openjpeg>=2.0
+
+# Optional Signal Balance MRI bias-field correction
+SimpleITK>=2.4,<3

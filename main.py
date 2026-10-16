@@ -324,6 +324,57 @@ def presentation_field(frames):
     return dict(rows=32, cols=32, gain=np.round(np.median(fields, axis=0), 4).ravel().tolist())
 
 
+def signal_balance_gain(frames, strength=.5):
+    """Shared, bounded N4 field from representative magnitude frames; no histogram matching.
+
+    Display only. A common field avoids independent slice normalization flicker.
+    Discontinuous station seams require registered overlap data and are not inferred here.
+    """
+    strength = float(strength)
+    if not np.isfinite(strength) or not 0 <= strength <= 1:
+        raise ValueError("Signal Balance strength must be between zero and one")
+    shape = np.asarray(frames[0]).shape
+    if strength == 0:
+        return np.ones(shape, np.float32), "off"
+    if len(shape) != 2 or min(shape) < 32:
+        return np.ones(shape, np.float32), "unsupported image dimensions"
+    try:
+        import SimpleITK as sitk
+    except ImportError:
+        raise RuntimeError("Signal Balance needs SimpleITK. Deploy the updated requirements.txt as well as main.py.")
+    fields=[]
+    for index in np.unique(np.linspace(0,len(frames)-1,min(3,len(frames))).astype(int)):
+        a=np.asarray(frames[index],np.float32)
+        if a.shape != shape or not np.isfinite(a).all() or a.min()<0:
+            return np.ones(shape,np.float32), "unsupported signed or nonfinite pixels"
+        high=float(np.percentile(a,99.5))
+        if high<=0 or np.ptp(a)<high*1e-6:
+            continue
+        # Otsu excludes air. Keep positive low-intensity tissue; avoid hole filling into air.
+        image=sitk.GetImageFromArray(np.maximum(a/high,1e-6))
+        mask=sitk.OtsuThreshold(image,0,1,128)
+        mask_array=sitk.GetArrayFromImage(mask).astype(bool)&(a>high*.01)
+        if mask_array.sum()<256 or mask_array.mean()<.03:
+            continue
+        mask=sitk.GetImageFromArray(mask_array.astype(np.uint8))
+        shrink=max(1,int(max(shape)/128))
+        corrector=sitk.N4BiasFieldCorrectionImageFilter()
+        corrector.SetNumberOfThreads(2)
+        corrector.SetMaximumNumberOfIterations([30,20])
+        corrector.SetConvergenceThreshold(.001)
+        corrector.Execute(sitk.Shrink(image,[shrink]*2),sitk.Shrink(mask,[shrink]*2))
+        logfield=sitk.GetArrayFromImage(corrector.GetLogBiasFieldAsImage(image))
+        logfield-=np.median(logfield[mask_array])
+        if np.isfinite(logfield).all():
+            fields.append(logfield)
+    if not fields:
+        return np.ones(shape,np.float32), "insufficient tissue support"
+    # ±50% maximum multiplicative change; no local texture or edge manipulation.
+    field=np.median(np.stack(fields),axis=0)
+    gain=np.exp(np.clip(-strength*field,np.log(2/3),np.log(1.5))).astype(np.float32)
+    return gain, "N4 shared-field correction"
+
+
 def series_info(frames):
     n = len(frames)
     idxs = sorted({int(np.clip(round((i + 0.5) / min(5, n) * n - 0.5), 0, n - 1)) for i in range(min(5, n))})
@@ -672,8 +723,12 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
         reason = "Original pixels: workspace processing limit" if enhance_requested else "Enhancement disabled"
     elif streamed:
         reason = reason or "Original pixels: streamed-series processing limit"
-    elif (adaptive or neural) and source_min < 0:
+    elif (adaptive or neural or params.get("signal_balance",0)>0) and source_min < 0:
         reason = "Signed intensity data: original pixels retained"
+    balance_gain = None
+    balance_status = None
+    if enhance and not streamed and not reason and params.get("signal_balance",0)>0:
+        balance_gain,balance_status=signal_balance_gain(frames,params["signal_balance"])
     if enhance and not streamed and not reason:
         enh = []
         for k in range(len(frames)):
@@ -690,6 +745,10 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
                 processed=enhance_frame(frames, k, info, params)
                 enh.append(processed)
                 frame_states.append("processed" if not np.array_equal(processed,frames[k]) else "original: insufficient noise support or processing off")
+            if balance_gain is not None:
+                enh[-1] = (enh[-1]*balance_gain).astype(np.float32)
+                if not np.array_equal(enh[-1],frames[k]):
+                    frame_states[-1] = "processed · Signal Balance"
             if progress:
                 progress((k + 1) / len(frames))
         if not any(state == "processed" for state in frame_states):
@@ -698,6 +757,9 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
     applied = sum(state == "processed" for state in frame_states)
     processing = dict(engine="Neural Restore v0.2 · experimental" if neural else "Adaptive texture MRI v0.4 · experimental" if adaptive else "Texture-preserving enhancement",
                       reason=reason, applied=applied, frames=frame_states)
+    if balance_gain is not None:
+        processing["engine"] += " + Signal Balance"
+        processing["signal_balance"] = balance_status
     # Single-frame geometry only; do not invent positions for enhanced multi-frame objects.
     geometry = []
     for ds in s["items"]:
@@ -1642,6 +1704,12 @@ def main():
             st.caption("Experimental trained magnitude-MRI denoising. Hold Original in the viewport to compare. Automatic noise estimation is not clinically calibrated across scanners; source pixels and ROI measurements remain original.")
         if params.get("algorithm") == "adaptive":
             st.caption("Experimental adaptive magnitude-MRI denoising. Compare using Enhance in the viewport. ROI values use original pixels. Dynamic/quantitative series and unsupported intensity data retain original pixels.")
+        balance = st.toggle("Signal Balance", value=False, disabled=not enhance,
+            help="Optional N4 correction of broad intensity shading. Does not match separate spine stations or repair fat suppression.")
+        params["signal_balance"] = st.slider("Signal Balance strength",0,100,50,
+            disabled=not enhance or not balance)/100.0 if balance else 0.0
+        if balance:
+            st.caption("Broad signal uniformity correction, shared across slices. Compare with Original. Genuine regional contrast may change; separate station seams are not matched. ROI measurements retain source values.")
     show_ids = sb.checkbox("Show patient identifiers", value=False,
                            help="Identifiers are hidden in the viewer by default. This does not anonymize the uploaded files.")
     sb.divider()
