@@ -35,9 +35,9 @@ MAX_PANELS = 6
 WORKSPACE_PAYLOAD_BUDGET = 96 * 1024 * 1024
 
 PRESETS = {
-    "Natural":  dict(denoise=25, detail=75, sharpen=60, grain=15, shading=0),
-    "Balanced": dict(denoise=35, detail=65, sharpen=55, grain=12, shading=0),
-    "Strong":   dict(denoise=60, detail=45, sharpen=45, grain=6,  shading=0),
+    "Natural":  dict(denoise=30, detail=80, sharpen=20, grain=20, shading=0),
+    "Balanced": dict(denoise=55, detail=70, sharpen=30, grain=15, shading=0),
+    "Strong":   dict(denoise=80, detail=55, sharpen=20, grain=10, shading=0),
     "Adaptive MRI · Gentle (experimental)": dict(algorithm="adaptive", strength="gentle", restore_detail=True, shading=0),
     "Adaptive MRI · Detail (experimental)": dict(algorithm="adaptive", strength="moderate", restore_detail=True, shading=0),
     "Adaptive MRI · Noise-first (experimental)": dict(algorithm="adaptive", strength="moderate", restore_detail=False, shading=0),
@@ -95,13 +95,42 @@ def estimate_local_noise(image, tile=32):
     confidence=float(min(1.,sum(counts)/max(1,int(tissue.sum())))*min(1.,n/4))
     return NoiseEstimate(sigma,confidence,n)
 
-def shifted(a,dy,dx):
-    h,w=a.shape;p=np.pad(a,((abs(dy),abs(dy)),(abs(dx),abs(dx))),mode='reflect')
-    return p[abs(dy)+dy:abs(dy)+dy+h,abs(dx)+dx:abs(dx)+dx+w]
+def texture_noise(image):
+    estimate=estimate_local_noise(image)
+    global_noise=estimate_noise(image)
+    # A sampled air mode can support the estimate when reconstruction correlates
+    # adjacent pixels. Never infer zero noise from a zero-filled background.
+    if global_noise['method']=='mode' and global_noise['sigma']>0:
+        air=np.asarray(image)[np.asarray(image)<=global_noise['bg_thr']]
+        positive=air[air>0]
+        if positive.size>=128 and positive.size>=.8*air.size:
+            mad=float(np.median(np.abs(positive-np.median(positive))))
+            ratio=float(np.median(positive))/max(mad,1e-12)
+            if 1.7<ratio<3.8:
+                estimate.sigma=np.maximum(estimate.sigma,global_noise['sigma'])
+                estimate.confidence=max(estimate.confidence,.5)
+    return estimate
+
+def texture_denoise(image, sigma, amount):
+    """Single-slice local Wiener shrinkage; no patch matching or magnitude debiasing.
+
+    Keep a source contribution and shrink fine fluctuations less in structured
+    neighborhoods. Sigma is an estimate, not a measurement of scanner noise.
+    """
+    a=np.asarray(image,dtype=np.float32)
+    amount=float(np.clip(amount,0,1))
+    if amount==0:return a.copy()
+    variance=np.broadcast_to(np.asarray(sigma,dtype=np.float32),a.shape)**2
+    mean=ndi.gaussian_filter(a,1.1,mode='reflect')
+    local_var=np.maximum(ndi.gaussian_filter(a*a,1.1,mode='reflect')-mean*mean,0)
+    # Local variance around a Gaussian mean contains less than the full noise variance.
+    gain=np.clip(1-.88*variance/np.maximum(local_var,1e-12),0,1)
+    candidate=mean+gain*(a-mean)
+    return (a+amount*(candidate-a)).astype(np.float32)
 
 def denoise_magnitude(image, strength='moderate', sigma=None, restore_detail=True):
     a=np.asarray(image,dtype=np.float32)
-    estimate=estimate_local_noise(a)
+    estimate=texture_noise(a)
     if strength not in ('gentle','moderate'):raise ValueError('strength must be gentle or moderate')
     if sigma is None:
         sg=estimate.sigma
@@ -109,46 +138,16 @@ def denoise_magnitude(image, strength='moderate', sigma=None, restore_detail=Tru
     else:
         sg=np.broadcast_to(np.asarray(sigma,dtype=np.float32),a.shape).copy()
         if not np.isfinite(sg).all() or np.min(sg)<=0:raise ValueError('sigma must be positive and finite')
-    var=sg*sg;h,w=a.shape;acc=np.zeros_like(a);ws=np.zeros_like(a);best=np.zeros_like(a)
-    search=4;bandwidth=.65 if strength=='gentle' else .85
-    for dy in range(-search,search+1):
-        for dx in range(-search,search+1):
-            if dy==0 and dx==0:continue
-            b=shifted(a,dy,dx);v=shifted(var,dy,dx);expected=var+v
-            # Whiten patch differences using both local variance estimates.
-            normalized=(a-b)**2/np.maximum(expected,1e-12)
-            distance=ndi.uniform_filter(normalized,3,mode='reflect')
-            weight=np.exp(-np.maximum(distance-1.,0.)/(bandwidth**2)).astype(np.float32)
-            valid=np.zeros_like(a,dtype=bool);valid[max(0,-dy):min(h,h-dy),max(0,-dx):min(w,w-dx)]=True;weight*=valid
-            # E[M²]=S²+2sigma² for the single-coil Rician magnitude model.
-            # Multi-coil/correlated noise violates this approximation and needs validation.
-            acc+=weight*(b*b-2*v);ws+=weight;best=np.maximum(best,weight)
-    self_weight=np.maximum(best,.05);den=np.sqrt(np.maximum((acc+self_weight*(a*a-2*var))/np.maximum(ws+self_weight,1e-12),0))
-    # Retain more source signal at coherent edges; estimate edges after slight smoothing.
-    smooth=ndi.gaussian_filter(a,.9);gy,gx=np.gradient(smooth);edge=np.hypot(gx,gy)/np.maximum(sg,1e-6)
-    protect=np.clip((edge-.35)/1.4,0,1);protect=protect*protect*(3-2*protect)
-    blend=(.30 if strength=='gentle' else .12)+(.45 if strength=='gentle' else .53)*protect
-    out=den+blend*(a-den)
-    if restore_detail:
-        # Restore coherent source residuals, without creating edges from an external prior.
-        # Two scales distinguish thin features from slowly varying low-contrast signal.
-        residual=a-out
-        foreground=np.clip((smooth/np.maximum(sg,1e-6)-2.5)/2.,0,1)
-        correction=np.zeros_like(a)
-        for radius,amount in ((.65,.55),(2.5,.65)):
-            remaining=residual-correction
-            coherent=ndi.gaussian_filter(remaining,radius)
-            # Approximate standard deviation of smoothed independent noise; not calibrated
-            # for correlated vendor reconstruction. Soft threshold avoids restoring all grain.
-            impulse=np.zeros((17,17),np.float32);impulse[8,8]=1
-            noise_factor=float(np.sqrt(np.sum(ndi.gaussian_filter(impulse,radius)**2)))
-            threshold=.35*sg*noise_factor
-            signal=np.sign(coherent)*np.maximum(np.abs(coherent)-threshold,0)
-            correction+=amount*signal*foreground
-        out+=correction
-    # Finite positive output; do not invent a larger dynamic range through sharpening.
-    out=np.clip(out,0,float(a.max())).astype(np.float32)
-    return out,{'status':'processed','strength':strength,'confidence':estimate.confidence,'valid_tiles':estimate.valid_tiles,'sigma_median':float(np.median(sg)),'sigma_min':float(sg.min()),'sigma_max':float(sg.max()),'noise_model':'high-SNR MAD estimate; approximate Rician moment correction','detail_restoration':bool(restore_detail),'source':'oracle sigma' if sigma is not None else 'automatic local estimate'}
+    # The exported DICOM may already have correlated/multi-coil noise or vendor
+    # denoising. Do not assume single-coil Rician statistics or subtract 2*sigma².
+    amount=.48 if strength=='gentle' else .72
+    if not restore_detail:amount=.88
+    out=texture_denoise(a,sg,amount)
+    return out,{'status':'processed','strength':strength,'confidence':estimate.confidence,'valid_tiles':estimate.valid_tiles,
+                'sigma_median':float(np.median(sg)),'noise_model':'local high-pass MAD estimate; no magnitude debiasing',
+                'detail_restoration':bool(restore_detail),'method':'source-blended local Wiener shrinkage',
+                'source':'oracle sigma' if sigma is not None else 'automatic local estimate'}
+
 
 def estimate_noise(img):
     img = np.asarray(img, np.float32)
@@ -248,50 +247,8 @@ def series_info(frames):
         los.append(p005); his.append(hi)
     sigma = float(np.median(sg)); fgv = float(np.median(fg))
     lo = min(0.0, float(min(los)))
-    hi = max(float(np.median(his)) - 2 * sigma, lo + 1e-6)
+    hi = max(float(np.median(his)), lo + 1e-6)
     return dict(field=presentation_field([frames[i] for i in idxs]), sigma=sigma, pb=float(np.median(pb)), lo=lo, hi=hi, snr=(fgv / sigma if sigma > 0 else 100.0))
-
-def nlm25(slices, c, sigma, strength, patch_base=0.0, R=2, Rn=1):
-    d = slices[c].astype(np.float32)
-    H, W = d.shape
-    h = sigma * (0.55 + 0.95 * strength)
-    ih2 = 1.0 / (h * h)
-    s2 = patch_base if patch_base > 0 else 2 * sigma * sigma
-    bias = 2 * sigma * sigma
-    acc = np.zeros_like(d); ws = np.zeros_like(d); wm = np.zeros_like(d)
-    offs = [(c, dx, dy) for dy in range(-R, R + 1) for dx in range(-R, R + 1) if dx or dy]
-    for dz in (-1, 1):
-        k = c + dz
-        if 0 <= k < len(slices):
-            offs += [(k, dx, dy) for dy in range(-Rn, Rn + 1) for dx in range(-Rn, Rn + 1)]
-    for k, dx, dy in offs:
-        o = slices[k].astype(np.float32)
-        sh = np.roll(np.roll(o, -dy, 0), -dx, 1)
-        valid = np.zeros((H, W), bool)
-        valid[max(0, -dy):H - max(0, dy), max(0, -dx):W - max(0, dx)] = True
-        e = np.where(valid, (d - sh) ** 2, 0.0)
-        m = ndi.uniform_filter(e, 3, mode="constant")
-        dd = np.maximum(m - s2, 0.0) * ih2
-        w = np.where((dd < 16) & valid, np.exp(-dd), 0.0).astype(np.float32)
-        acc += w * sh * sh; ws += w; np.maximum(wm, w, out=wm)
-    den = ws + wm
-    sq = d * d
-    e2 = np.where(den > 0, (acc + wm * sq) / np.where(den > 0, den, 1), sq)
-    return np.sqrt(np.maximum(e2 - bias, 0.0)).astype(np.float32)
-
-def _smoothstep(t):
-    t = np.clip(t, 0.0, 1.0)
-    return t * t * (3 - 2 * t)
-
-def retain_detail(orig, den, sigma, alpha, grain):
-    if sigma <= 0 or (alpha <= 0 and grain <= 0):
-        return den
-    gy, gx = np.gradient(den)
-    g = np.hypot(gx, gy) / sigma
-    sw = _smoothstep((g - 0.35) / 1.6)
-    fg = _smoothstep((den - 1.5 * sigma) / (2.5 * sigma))
-    k = np.minimum(fg * (alpha * sw + grain), 1.0)
-    return den + k * (orig - den)
 
 def bias_correct(d, strength, info):
     if strength <= 0:
@@ -307,30 +264,33 @@ def bias_correct(d, strength, info):
     return d * gain.astype(np.float32)
 
 def sharpen(d, sigma, s, info):
-    if s <= 0:
-        return d
-    rng = max(info["hi"] - info["lo"], 1e-6)
-    t0 = max(1.2 * rng / 255.0, 0.225 * sigma)
-    t1 = 3.5 * t0
-    d1 = d - ndi.gaussian_filter(d, 0.75)
-    d2 = d - ndi.gaussian_filter(d, 1.9)
-    gate = _smoothstep((np.abs(d1) - t0) / (t1 - t0))
-    o = d + gate * (1.1 * s * d1 + 0.55 * s * d2)
-    o = np.clip(o, ndi.minimum_filter(d, 3), ndi.maximum_filter(d, 3))
-    return np.where(d <= 0.01 * rng, d, o)
+    if s<=0:return d.copy()
+    fine=ndi.gaussian_filter(d,.7,mode='reflect')
+    broad=ndi.gaussian_filter(d,1.4,mode='reflect')
+    local_var=np.maximum(ndi.gaussian_filter(d*d,1.2,mode='reflect')-
+                         ndi.gaussian_filter(d,1.2,mode='reflect')**2,0)
+    variance=np.asarray(sigma,dtype=np.float32)**2
+    reliability=np.clip((local_var-variance)/np.maximum(local_var+variance,1e-12),0,1)
+    detail=.7*(d-fine)+.3*(fine-broad)
+    boost=s*reliability*detail
+    cap=max(info['hi']-info['lo'],1e-6)*.04*s
+    out=d+np.clip(boost,-cap,cap)
+    return np.clip(out,ndi.minimum_filter(d,3,mode='reflect'),ndi.maximum_filter(d,3,mode='reflect')).astype(np.float32)
 
 def enhance_frame(frames, k, info, p):
-    d0 = frames[k].astype(np.float32)
-    sg = info["sigma"]
-    if sg <= 0:
-        return d0
-    a0 = max(0, k - 1)
-    arr = frames[a0:k + 2]
-    d = nlm25(arr, k - a0, sg, 0.2 + 1.2 * p["denoise"] / 100.0, info["pb"]) if p["denoise"] > 0 else d0
-    d = bias_correct(d, p.get("shading", 0) / 100.0, info)
-    d = retain_detail(d0, d, sg, p["detail"] / 100.0, p["grain"] / 100.0)
-    d = sharpen(d, sg, p["sharpen"] / 100.0, info)
-    return d.astype(np.float32)
+    d0=np.asarray(frames[k],dtype=np.float32)
+    if min(d0.shape)<16 or not np.isfinite(d0).all() or d0.min()<0:return d0.copy()
+    estimate=texture_noise(d0)
+    if estimate.confidence<.35 or not np.any(estimate.sigma>0):return d0.copy()
+    sg=estimate.sigma
+    # Same-slice processing avoids borrowing anatomy from a neighboring slice.
+    # Retain a minimum source contribution; never threshold the residual into patches.
+    preservation=.15+.20*np.clip(p.get('detail',70)/100,0,1)+.10*np.clip(p.get('grain',15)/100,0,1)
+    amount=np.clip(p.get('denoise',55)/100,0,1)*(1-preservation)
+    d=texture_denoise(d0,sg,amount)
+    if p.get('shading',0)>0:d=bias_correct(d,p['shading']/100,info)
+    return sharpen(d,sg,np.clip(p.get('sharpen',30)/100,0,1),info)
+
 
 def pack_series(orig_frames, enh_frames=None):
     mn = min(float(f.min()) for f in orig_frames)
@@ -578,15 +538,15 @@ def quantitative_series(ds):
 def adaptive_series_reason(s):
     for ds in s["items"]:
         if str(getattr(ds, "Modality", "")).upper() != "MR":
-            return "Adaptive MRI is available for magnitude MR images only"
+            return "Enhancement is available for magnitude MR images only"
         if str(getattr(ds, "PhotometricInterpretation", "")).upper() not in ("MONOCHROME1", "MONOCHROME2"):
-            return "Unsupported pixel presentation for adaptive MRI"
+            return "Unsupported pixel presentation for MRI enhancement"
         if min(int(getattr(ds, "Rows", 0)), int(getattr(ds, "Columns", 0))) < 16:
             return "Image matrix too small for adaptive noise estimation"
         if quantitative_series(ds):
             return "Quantitative or phase series: original pixels retained"
     if cine_series(s):
-        return "Dynamic/cine series: adaptive MRI has not been evaluated"
+        return "Dynamic/cine series: original pixels retained"
     return None
 
 
@@ -614,15 +574,13 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
     enh = None
     adaptive = params.get("algorithm") == "adaptive"
     frame_states = []
-    reason = adaptive_series_reason(s) if adaptive else None
+    reason = adaptive_series_reason(s)
     if not enhance:
         reason = "Original pixels: workspace processing limit" if enhance_requested else "Enhancement disabled"
     elif streamed:
         reason = reason or "Original pixels: streamed-series processing limit"
     elif adaptive and source_min < 0:
         reason = "Signed intensity data: original pixels retained"
-    elif not adaptive and info["sigma"] <= 0:
-        reason = "Original pixels: no reliable global noise estimate"
     if enhance and not streamed and not reason:
         enh = []
         for k in range(len(frames)):
@@ -632,15 +590,16 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
                 frame_states.append("processed" if status["status"] == "processed" else "original: insufficient noise support")
                 enh.append(processed)
             else:
-                enh.append(enhance_frame(frames, k, info, params))
-                frame_states.append("processed")
+                processed=enhance_frame(frames, k, info, params)
+                enh.append(processed)
+                frame_states.append("processed" if not np.array_equal(processed,frames[k]) else "original: insufficient noise support or processing off")
             if progress:
                 progress((k + 1) / len(frames))
         if not any(state == "processed" for state in frame_states):
             enh = None
             reason = "Original pixels: insufficient local noise support"
     applied = sum(state == "processed" for state in frame_states)
-    processing = dict(engine="Adaptive MRI v0.3 · experimental" if adaptive else "Classic enhancement",
+    processing = dict(engine="Adaptive texture MRI v0.4 · experimental" if adaptive else "Texture-preserving enhancement",
                       reason=reason, applied=applied, frames=frame_states)
     # Single-frame geometry only; do not invent positions for enhanced multi-frame objects.
     geometry = []
@@ -681,7 +640,7 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
                 spacing=[float(sp[0]), float(sp[1])], memoryId=hashlib.sha256(f"{s['uid']}|{s['desc']}|{s['rows']}|{s['cols']}".encode()).hexdigest(), spacingKnown=bool(_floats(getattr(a, "PixelSpacing", None) or [], 2)), thickness=_first(getattr(a, "SliceThickness", None)), geometry=geometry, sequence=str(getattr(a, "SeriesDescription", "") or getattr(a, "ProtocolName", "") or ""),
                 invert=str(getattr(a, "PhotometricInterpretation", "")).upper() == "MONOCHROME1",
                 pos=pos, hasEnh=bool(enh), processing=processing, streamed=streamed, snr=round(info["snr"], 1), sigma=info["sigma"],
-                presentation=dict(default="balanced" if balanced_default else "dicom" if dicom_wl else "auto", field=field, base=info["lo"]),
+                presentation=dict(default="dicom" if dicom_wl else "auto", field=field, base=info["lo"]),
                 wl=dict(balanced=dicom_wl or [info["lo"], info["hi"]], auto=[info["lo"], info["hi"]], dicom=dicom_wl, full=[source_min, source_max]),
                 **packed)
 
@@ -766,7 +725,7 @@ const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.p
 const opt={sync:true,link:false,tool:'wl',overlays:true,refs:true,viewLink:false};
 function seriesKey(s){return s.memoryId||String(catalog.indexOf(s));}
 const displayMemory=new Map();let memoryTimer;
-try{if(P.studyKey){const entries=JSON.parse(sessionStorage.getItem('dicom-display-'+P.studyKey)||'[]');if(Array.isArray(entries))for(const [k,v] of entries)if(typeof k==='string'&&catalog.some(s=>seriesKey(s)===k)&&v&&typeof v==='object')displayMemory.set(k,v);}}catch(e){}
+try{if(P.studyKey){const entries=JSON.parse(sessionStorage.getItem('dicom-display-texture-v4-'+P.studyKey)||'[]');if(Array.isArray(entries))for(const [k,v] of entries)if(typeof k==='string'&&catalog.some(s=>seriesKey(s)===k)&&v&&typeof v==='object')displayMemory.set(k,v);}}catch(e){}
 let hover=0;
 
 const $=(t,a,c)=>{const e=document.createElement(t);if(a)Object.assign(e,a);if(c)c.forEach(x=>e.append(x));return e;};
@@ -878,7 +837,7 @@ function updateView(i,pan=false){const source=geom(i),st=S[i];if(opt.viewLink&&s
  }}draw(i);}
 function rememberSeries(i){const series=P.series[i],st=S[i],k=catalog.indexOf(series);if(k<0||!st.displayConfig)return;
  const record={...st.displayConfig(),idx:st.idx,lo:st.lo,hi:st.hi,zoom:st.zoom,px:st.px,py:st.py,ctRestore:st.ctRestore?{...st.ctRestore}:null};displayMemory.set(seriesKey(series),record);
- if(P.studyKey&&!memoryTimer)memoryTimer=setTimeout(()=>{memoryTimer=null;try{sessionStorage.setItem('dicom-display-'+P.studyKey,JSON.stringify([...displayMemory]));}catch(e){}},250);
+ if(P.studyKey&&!memoryTimer)memoryTimer=setTimeout(()=>{memoryTimer=null;try{sessionStorage.setItem('dicom-display-texture-v4-'+P.studyKey,JSON.stringify([...displayMemory]));}catch(e){}},250);
 }
 function restoredState(index){const s=catalog[index],r=displayMemory.get(seriesKey(s));if(!r)return null;
  if(!['idx','lo','hi','zoom','px','py'].every(k=>Number.isFinite(r[k]))||r.hi<=r.lo)return null;
@@ -921,22 +880,52 @@ function presentationGray(s,st,value,x,y){
 }
 // Native-matrix display filters: source arrays and quantitative measurements stay untouched.
 function filterLevel(v){return Math.max(0,Math.min(5,Math.round(Number(v)||0)));}
-function filterPixels(src,w,h,smooth,sharp,range){
- smooth=filterLevel(smooth);sharp=filterLevel(sharp);let out=src;
- if(smooth){
-  out=new Float32Array(src.length);const radius=smooth<3?1:2,domain=.55+.18*smooth,rs=Math.max(1e-9,range*(.012+.007*smooth)),weights=[];
-  for(let dy=-radius;dy<=radius;dy++)for(let dx=-radius;dx<=radius;dx++)weights.push([dx,dy,Math.exp(-(dx*dx+dy*dy)/(2*domain*domain))]);
-  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const k=y*w+x,c=src[k];let sum=0,total=0;
-   for(const [dx,dy,spatial] of weights){const v=src[Math.max(0,Math.min(h-1,y+dy))*w+Math.max(0,Math.min(w-1,x+dx))],d=(v-c)/rs,weight=spatial*Math.exp(-.5*d*d);sum+=v*weight;total+=weight;}
-   out[k]=sum/total;
+function blurPixels(src,w,h,sigma){
+ const radius=Math.ceil(3*sigma),kernel=[];let sum=0;
+ for(let n=-radius;n<=radius;n++){const v=Math.exp(-n*n/(2*sigma*sigma));kernel.push(v);sum+=v;}
+ for(let n=0;n<kernel.length;n++)kernel[n]/=sum;
+ const tmp=new Float32Array(src.length),out=new Float32Array(src.length);
+ for(let y=0;y<h;y++)for(let x=0;x<w;x++){let v=0;for(let n=-radius;n<=radius;n++)v+=kernel[n+radius]*src[y*w+Math.max(0,Math.min(w-1,x+n))];tmp[y*w+x]=v;}
+ for(let y=0;y<h;y++)for(let x=0;x<w;x++){let v=0;for(let n=-radius;n<=radius;n++)v+=kernel[n+radius]*tmp[Math.max(0,Math.min(h-1,y+n))*w+x];out[y*w+x]=v;}
+ return out;
+}
+function filterNoise(src,w,h){
+ // Tissue high-pass MAD: independent of display window and absolute intensity units.
+ const samples=[],stride=Math.max(1,Math.floor(src.length/32768));
+ for(let k=0;k<src.length;k+=stride)samples.push(src[k]);samples.sort((a,b)=>a-b);
+ const low=samples[0],high=samples[Math.floor((samples.length-1)*.995)],floor=low+.08*(high-low),tiles=[];
+ for(let by=0;by<h-1;by+=32)for(let bx=0;bx<w-1;bx+=32){const hh=[];
+  for(let y=by;y<Math.min(h-1,by+32);y++)for(let x=bx;x<Math.min(w-1,bx+32);x++){const k=y*w+x,a=src[k],b=src[k+1],c=src[k+w],d=src[k+w+1];
+   if(Math.min(a,b,c,d)>floor)hh.push(Math.abs((a-b-c+d)/2));
+  }
+  if(hh.length>=48){hh.sort((a,b)=>a-b);tiles.push(hh[Math.floor(hh.length/2)]/.67448975);}
+ }
+ if(!tiles.length)return 0;tiles.sort((a,b)=>a-b);
+ return Math.min(Math.max(0,tiles[Math.floor(tiles.length/2)]),Math.max(0,high-low)*.12);
+}
+function filterPixels(src,w,h,smooth,sharp,range,noise){
+ smooth=filterLevel(smooth);sharp=filterLevel(sharp);if(!smooth&&!sharp)return src;
+ // A deterministic source estimate replaces the old window-width-dependent thresholds.
+ const sigma=Number.isFinite(noise)&&noise>=0?noise:filterNoise(src,w,h),variance=sigma*sigma;
+ let out=src;
+ if(smooth&&variance>0){
+  const radius=[0,.6,.85,1.1,1.4,1.75][smooth],amount=[0,.30,.48,.66,.82,.96][smooth];
+  const mean=blurPixels(src,w,h,radius),squares=Float32Array.from(src,v=>v*v),second=blurPixels(squares,w,h,radius);
+  out=new Float32Array(src.length);
+  for(let k=0;k<src.length;k++){
+   const local=Math.max(0,second[k]-mean[k]*mean[k]),gain=Math.max(0,1-.88*variance/Math.max(local,1e-12));
+   out[k]=src[k]+amount*(mean[k]+gain*(src[k]-mean[k])-src[k]);
   }
  }
  if(sharp){
-  const base=out,result=new Float32Array(base),threshold=range*.004,cap=range*.012*sharp;
-  for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const k=y*w+x;let sum=0,mn=Infinity,mx=-Infinity;
-   for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const v=base[k+dy*w+dx];sum+=v;mn=Math.min(mn,v);mx=Math.max(mx,v);}
-   const detail=base[k]-sum/9,gate=Math.max(0,1-threshold/Math.max(threshold,Math.abs(detail))),boost=Math.max(-cap,Math.min(cap,detail*gate*.25*sharp));
-   result[k]=Math.max(mn,Math.min(mx,base[k]+boost));
+  const fine=blurPixels(out,w,h,.7),broad=blurPixels(out,w,h,1.4),mean=blurPixels(out,w,h,1.2);
+  const second=blurPixels(Float32Array.from(out,v=>v*v),w,h,1.2),result=new Float32Array(out),amount=[0,.4,.8,1.25,1.8,2.5][sharp];
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+   const k=y*w+x,local=Math.max(0,second[k]-mean[k]*mean[k]);
+   const reliability=Math.max(0,(local-variance)/Math.max(local+variance,1e-12));
+   const detail=.7*(out[k]-fine[k])+.3*(fine[k]-broad[k]);let mn=out[k],mx=out[k];
+   for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const v=out[Math.max(0,Math.min(h-1,y+dy))*w+Math.max(0,Math.min(w-1,x+dx))];mn=Math.min(mn,v);mx=Math.max(mx,v);}
+   result[k]=Math.max(mn,Math.min(mx,out[k]+amount*reliability*detail));
   }out=result;
  }return out;
 }
@@ -956,7 +945,7 @@ async function draw(i){
   const rng=Math.max(1e-9,view.hi-view.lo),inv=view.inv;
   let filtered=null;
   if(!st.holdOriginal&&(st.smooth||st.sharp)){
-   const key=[st.idx,useEnh,st.smooth,st.sharp,rng].join(':');
+   const key=[st.idx,useEnh,st.smooth,st.sharp].join(':');
    if(st.filterCache?.key===key)filtered=st.filterCache.data;
    else{filtered=filterPixels(Float32Array.from(data,u=>val(s,u)),w,h,st.smooth,st.sharp,rng);st.filterCache={key,data:filtered};}
   }
@@ -1193,7 +1182,7 @@ P.series.forEach((item,i)=>{
   ['balanced','auto','dicom','full'].forEach(n=>{
     if(n!=='dicom'||s.wl.dicom)sel.append($('option',{value:n,textContent:{balanced:'Balanced display',auto:'W/L Auto',dicom:'W/L DICOM',full:'W/L Full'}[n]}));
   });
-  sel.value=st.wl;sel.title='Balanced: stable grayscale with gentle, bounded image-derived shading. Auto/DICOM/Full: linear display.';sel.onchange=()=>preset(i,sel.value);
+  sel.value=st.wl;sel.title='Balanced: optional image-derived shading correction. Auto/DICOM/Full: linear display; DICOM is the default when available.';sel.onchange=()=>preset(i,sel.value);
   
   const bEnh=$('button',{textContent:'Enhance'}),bInv=$('button',{textContent:'Invert'}),bRst=$('button',{textContent:'Reset'}),bPlay=$('button',{textContent:'▶ Cine'});
   bEnh.className=st.enh?'on':'';bEnh.style.display=s.hasEnh?'':'none';
@@ -1216,7 +1205,7 @@ P.series.forEach((item,i)=>{
   bOriginal.onblur=()=>endOriginal(i);bOriginal.onclick=e=>e.preventDefault();bOriginal.style.touchAction='none';
   const filters={};
   for(const [key,label] of [['smooth','Smoothening'],['sharp','Sharpening']]){
-   const control=$('select',{title:label+' · display only; source measurements unchanged',ariaLabel:label});
+   const control=$('select',{title:label+(key==='smooth'?' · noise-adaptive smoothing; 1 subtle → 5 strongest':' · noise-gated fine detail; 1 subtle → 5 strongest')+' · source measurements unchanged',ariaLabel:label});
    for(let level=0;level<=5;level++)control.append($('option',{value:String(level),textContent:label+': '+(level||'Off')}));
    control.value=String(st[key]);control.onchange=()=>{st[key]=filterLevel(control.value);draw(i);};filters[key]=control;
   }
@@ -1317,7 +1306,7 @@ setLayout(2,2);
 let sidebarAttempts=0;function attachSidebar(){if(!connectStudySidebar()&&sidebarAttempts++<40)setTimeout(attachSidebar,100);}attachSidebar();
 const sidebarReconnect=setInterval(()=>{const doc=sidebarDocument();if(doc?.getElementById('study-series-search')!==sidebarSearch||doc?.getElementById('study-plane-filter')!==sidebarPlane)connectStudySidebar();},500);
 window.addEventListener('pagehide',()=>clearInterval(sidebarReconnect));
-window.addEventListener('pagehide',()=>{if(P.studyKey)try{sessionStorage.setItem('dicom-display-'+P.studyKey,JSON.stringify([...displayMemory]));}catch(e){}});
+window.addEventListener('pagehide',()=>{if(P.studyKey)try{sessionStorage.setItem('dicom-display-texture-v4-'+P.studyKey,JSON.stringify([...displayMemory]));}catch(e){}});
 new ResizeObserver(()=>requestAnimationFrame(drawAll)).observe(grid);
 
 window.addEventListener('keydown',e=>{
@@ -1529,11 +1518,13 @@ def main():
                     "**Linked zoom/pan:** enable Zoom / pan linked in the image toolbar. Zoom links compatible views; pan links parallel views.\n\n"
                     "**Expand view:** double-click an image; double-click again to restore the layout.\n\n"
                     "**Magnifier:** right-click → Enable magnifier, then hover over anatomy. Escape or Disable magnifier turns it off.\n\n"
+                    "**Original:** hold the viewport button to bypass all viewer processing at the DICOM window; release to restore.\n\n"
+                    "**Smoothening / Sharpening:** independent levels 1–5; Off bypasses each filter. Higher levels are stronger.\n\n"
                     "**Display memory:** automatic. Switch away from a series and return; its slice and display settings are restored within this browser tab.")
     sb.divider()
     sb.caption("PROCESSING")
     enhance = sb.toggle("Enable enhancement", value=True,
-                        help="Creates denoised/detail-enhanced pixels where available. Balanced display works independently; choose W/L Auto or DICOM for linear presentation.")
+                        help="Source-blended noise reduction and restrained detail enhancement. Starts with the DICOM window when available. Hold Original in a viewport to compare.")
     with sb.expander("Enhancement settings", expanded=False):
         preset = st.selectbox("Preset", list(PRESETS) + ["Custom Parameters"], index=1,
                               disabled=not enhance)
@@ -1710,7 +1701,14 @@ def selftest():
     info = series_info(frames)
     out = enhance_frame(frames, 2, info, PRESETS["Balanced"])
     print(f"[enhance] PSNR noisy {psnr(frames[2]):.2f} dB -> enhanced {psnr(out):.2f} dB")
-    assert psnr(out) > psnr(frames[2]) + 1.5
+    # This pipeline deliberately does not assume single-coil Rician debiasing.
+    # Check modest noise reduction here; fine-feature retention is checked below.
+    assert psnr(out) > psnr(frames[2]) + .25
+    edge=np.zeros((96,96),np.float32);edge[:,48:]=.8;edge[24:72,36:38]=.12
+    filtered=texture_denoise(edge,.03,.75)
+    assert abs(float(filtered[40:56,36:38].mean())-.12)<.01
+    assert np.max(np.abs(filtered[:,47:49]-edge[:,47:49]))<.01
+    assert np.array_equal(edge[:,:30],filtered[:,:30])
     pk = pack_series(frames, [out] * 5)
     back = unpack_frame(pk["items"][2]["o"], N, N, pk["off"], pk["scale"])
     assert np.abs(back - frames[2]).max() <= pk["scale"] + 1e-9
