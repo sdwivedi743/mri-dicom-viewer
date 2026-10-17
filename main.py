@@ -31,7 +31,7 @@ try:
 except ImportError:
     st = None
 
-APP_BUILD = "2026.10.17-design.6"
+APP_BUILD = "2026.10.17-reconstruction.8"
 MAX_PANELS = 6
 WORKSPACE_PAYLOAD_BUDGET = 96 * 1024 * 1024
 
@@ -696,6 +696,37 @@ def diffusion_views(ds):
     return [(ds,"",None)]
 
 
+
+def static_spatial_views(ds):
+    """Expose enhanced static spatial frames while leaving cine/temporal objects intact."""
+    n=int(getattr(ds,"NumberOfFrames",1) or 1)
+    frames=getattr(ds,"PerFrameFunctionalGroupsSequence",[])
+    if n<3 or len(frames)!=n or str(getattr(ds,"Modality","")).upper() not in ("MR","CT"):return None
+    if int(getattr(ds,"NumberOfTemporalPositions",1) or 1)>1 or any(hasattr(ds,k) for k in ("TriggerTime","FrameTime","FrameTimeVector")):return None
+    shareds=getattr(ds,"SharedFunctionalGroupsSequence",[]);shared=shareds[0] if shareds else None
+    temporal=set();views=[]
+    for index,frame in enumerate(frames):
+        for content in getattr(frame,"FrameContentSequence",[]):
+            temporal.add(int(getattr(content,"TemporalPositionIndex",1) or 1))
+        if len(temporal)>1 or getattr(frame,"CardiacSynchronizationSequence",None):return None
+        overrides={"NumberOfFrames":1,"InstanceNumber":index+1}
+        for scope in (shared,frame):
+            if scope is None:continue
+            for seq,attrs in (("PlanePositionSequence",("ImagePositionPatient",)),("PlaneOrientationSequence",("ImageOrientationPatient",)),("PixelMeasuresSequence",("PixelSpacing","SliceThickness","SpacingBetweenSlices")),("PixelValueTransformationSequence",("RescaleSlope","RescaleIntercept")),("FrameVOILUTSequence",("WindowCenter","WindowWidth")),("MREchoSequence",("EffectiveEchoTime",)),("MRImageFrameTypeSequence",("FrameType",)),("CTImageFrameTypeSequence",("FrameType",))):
+                items=getattr(scope,seq,[])
+                if items:
+                    for attr in attrs:
+                        if hasattr(items[0],attr):overrides[{"FrameType":"ImageType","EffectiveEchoTime":"EchoTime"}.get(attr,attr)]=getattr(items[0],attr)
+            mappings=getattr(scope,"RealWorldValueMappingSequence",None)
+            if mappings:overrides["RealWorldValueMappingSequence"]=mappings
+        view=DiffusionFrameView(ds,overrides,index)
+        if not (_floats(getattr(view,"ImagePositionPatient",None),3) and _floats(getattr(view,"ImageOrientationPatient",None),6) and _floats(getattr(view,"PixelSpacing",None),2)):return None
+        views.append(view)
+    positions=[tuple(_floats(v.ImagePositionPatient,3)) for v in views]
+    if len(set(positions))!=n:return None
+    return [(view,"",None) for view in views]
+
+
 def group_series(named_datasets):
     seen,groups=set(),{};dup=0
     for name,ds in named_datasets:
@@ -703,7 +734,9 @@ def group_series(named_datasets):
         if sop:
             if sop in seen:dup+=1;continue
             seen.add(sop)
-        for view,kind,bvalue in diffusion_views(ds):
+        views=diffusion_views(ds)
+        if len(views)==1 and not views[0][1]:views=static_spatial_views(ds) or views
+        for view,kind,bvalue in views:
             key=(str(getattr(ds,"StudyInstanceUID","")),str(getattr(ds,"SeriesInstanceUID","unknown")),int(ds.Rows),int(ds.Columns),kind,bvalue)
             groups.setdefault(key,[]).append(view)
     # Unknown objects within a known diffusion series must not enter a DWI or ADC stack.
@@ -1038,6 +1071,21 @@ def clinical_display_windows(frames,ds):
     return {k:v for k,v in result.items() if v[1]>v[0]}
 
 
+
+def volume_support(s):
+    """Acquisition-level volume gates complement client-side physical-grid validation."""
+    if cine_series(s):return dict(reason="Dynamic/cine or unsupported multi-frame data cannot form a static spatial volume.")
+    if any(str(getattr(d,"PhotometricInterpretation","")).upper() not in ("MONOCHROME1","MONOCHROME2") for d in s["items"]):return dict(reason="Scalar monochrome pixels are required.")
+    echoes={round(float(v),3) for d in s["items"] if (v:=_first(getattr(d,"EchoTime",None))) is not None}
+    if len(echoes)>1:return dict(reason="Mixed echo times: choose a single-echo stack.")
+    bvalues={round(float(v),1) for d in s["items"] if (v:=_first(getattr(d,"DiffusionBValue",None))) is not None}
+    if len(bvalues)>1:return dict(reason="Mixed diffusion b-values: choose one separated DWI stack.")
+    if any("MOSAIC" in str(getattr(d,"ImageType","")).upper() for d in s["items"]):return dict(reason="Vendor mosaic images need unpacking before reconstruction.")
+    thickness=[_first(getattr(d,"SliceThickness",None)) for d in s["items"]]
+    thickness=[v for v in thickness if v is not None and np.isfinite(v) and v>0]
+    return dict(reason=None,sliceThickness=float(np.median(thickness)) if thickness else None)
+
+
 def build_payload_series(s, enhance, params, progress=None, force_stream=False, enhance_requested=None):
     streamed = force_stream or cine_series(s) or payload_estimate(s, enhance) > 24*1024*1024
     if payload_estimate(s, False) > 2*1024*1024*1024:
@@ -1140,7 +1188,7 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
     orientations = {tuple(np.round(_floats(getattr(d, "ImageOrientationPatient", None) or [], 6) or [], 4)) for d in s["items"]}
     balanced_default = not quantitative and not cine_series(s)
     field = info.get("field") if balanced_default and len(orientations) == 1 and () not in orientations and params.get("shading", 0) == 0 else None
-    return dict(diffusion=diffusion_payload_metadata(s), stationSignature=station_signature(s), title=s["label"], modality=str(getattr(a, "Modality", "")).upper(), plane=plane_name(s["normal"]), rows=s["rows"], cols=s["cols"],
+    return dict(volumeSupport=volume_support(s), diffusion=diffusion_payload_metadata(s), stationSignature=station_signature(s), title=s["label"], modality=str(getattr(a, "Modality", "")).upper(), plane=plane_name(s["normal"]), rows=s["rows"], cols=s["cols"],
                 spacing=[float(sp[0]), float(sp[1])], memoryId=hashlib.sha256(f"{s['uid']}|{s['desc']}|{s['rows']}|{s['cols']}".encode()).hexdigest(), spacingKnown=bool(_floats(getattr(a, "PixelSpacing", None) or [], 2)), thickness=_first(getattr(a, "SliceThickness", None)), geometry=geometry, sequence=str(getattr(a, "SeriesDescription", "") or getattr(a, "ProtocolName", "") or ""),
                 invert=str(getattr(a, "PhotometricInterpretation", "")).upper() == "MONOCHROME1",
                 pos=pos, hasEnh=bool(enh), processing=processing, streamed=streamed, snr=round(info["snr"], 1), sigma=info["sigma"],
@@ -1305,6 +1353,94 @@ const PH=__PANEL_H__, N=16;
 let layoutRows=2,layoutCols=2,expandedViewport=null,expandedLayout=null;
 const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null,ctLike:false,ctContrast:1.25,ctSharp:.25,ctRestore:null,candidateOverlay:s.restrictedCandidates?.status==='processed',rotation:0,flipH:false,flipV:false,smooth:0,sharp:0,holdOriginal:false,filterCache:null});});
 const opt={sync:true,link:false,tool:'wl',overlays:true,refs:true,viewLink:false};
+// RECONSTRUCTION_CORE_START
+const RECON_MAX_BYTES=64*1024*1024,reconVolumes=new Map();let reconQueue=Promise.resolve();
+const rDot=(a,b)=>a.reduce((s,v,k)=>s+v*b[k],0),rSub=(a,b)=>a.map((v,k)=>v-b[k]);
+function rCross(a,b){return [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];}
+function volumeGeometry(s){
+ if(s.reconstruction||s.derivedComposite)throw Error('Choose an original source stack.');
+ if(!['MR','CT'].includes(s.modality))throw Error('Reconstruction currently supports scalar MR and CT stacks.');
+ if(s.volumeSupport?.reason)throw Error(s.volumeSupport.reason);
+ const gs=s.geometry||[];if(gs.length!==s.items.length||gs.length<3||gs.some(g=>!g))throw Error('At least three slices with complete DICOM geometry are required.');
+ const g=gs[0];if(Math.abs(rDot(g.row,g.row)-1)>.001||Math.abs(rDot(g.col,g.col)-1)>.001||Math.abs(rDot(g.row,g.col))>.001||rCross(g.row,g.col).some((x,k)=>Math.abs(x-g.normal[k])>.001))throw Error('Invalid orientation basis.');if(!g.ref||!g.study||g.spacing.some(v=>!Number.isFinite(v)||v<=0))throw Error('Invalid source geometry.');
+ for(const h of gs){
+  if(h.ref!==g.ref||h.study!==g.study||h.spacing.some((v,k)=>Math.abs(v-g.spacing[k])>.001)||h.row.some((v,k)=>Math.abs(v-g.row[k])>1e-4)||h.col.some((v,k)=>Math.abs(v-g.col[k])>1e-4))throw Error('Mixed orientation, spacing, study or frame of reference.');
+ }
+ const sorted=gs.map((h,index)=>({index,d:rDot(h.origin,g.normal)})).sort((a,b)=>a.d-b.d),gaps=sorted.slice(1).map((v,k)=>v.d-sorted[k].d);
+ const step=[...gaps].sort((a,b)=>a-b)[Math.floor(gaps.length/2)];
+ if(!Number.isFinite(step)||step<.01||gaps.some(v=>v<.01||Math.abs(v-step)>Math.max(.05,step*.02)))throw Error('Duplicate positions, missing slices or irregular spacing. Separate repeated acquisitions before reconstruction.');
+ const first=gs[sorted[0].index];
+ if(gs.some(h=>{const d=rSub(h.origin,first.origin);return Math.hypot(rDot(d,first.row),rDot(d,first.col))>.1;}))throw Error('Sheared or shifted slice origins are not supported.');
+ const bytes=s.rows*s.cols*gs.length*2;if(bytes>RECON_MAX_BYTES)throw Error('This stack exceeds the 64 MiB reconstruction memory limit.');
+ return {origin:[...first.origin],row:[...first.row],col:[...first.col],normal:[...first.normal],spacing:[...first.spacing,step],rows:s.rows,cols:s.cols,depth:gs.length,order:sorted.map(v=>v.index),ref:g.ref,study:g.study,bytes,warning:s.volumeSupport?.sliceThickness&&step>s.volumeSupport.sliceThickness+.05?'Source slice gaps are present; interpolation spans unsampled gaps.':''};
+}
+function rWorld(v,x,y,z){return v.origin.map((q,k)=>q+x*v.spacing[1]*v.row[k]+y*v.spacing[0]*v.col[k]+z*v.spacing[2]*v.normal[k]);}
+function rVoxel(v,p){const d=rSub(p,v.origin);return [rDot(d,v.row)/v.spacing[1],rDot(d,v.col)/v.spacing[0],rDot(d,v.normal)/v.spacing[2]];}
+function rSample(v,x,y,z){
+ const eps=1e-6;if(x< -eps||y< -eps||z< -eps||x>v.cols-1+eps||y>v.rows-1+eps||z>v.depth-1+eps)return null;
+ x=Math.max(0,Math.min(v.cols-1,x));y=Math.max(0,Math.min(v.rows-1,y));z=Math.max(0,Math.min(v.depth-1,z));
+ const ix=Math.floor(x),iy=Math.floor(y),iz=Math.floor(z),xx=Math.min(ix+1,v.cols-1),yy=Math.min(iy+1,v.rows-1),zz=Math.min(iz+1,v.depth-1),fx=x-ix,fy=y-iy,fz=z-iz,d=v.data,plane=v.rows*v.cols;
+ const i=iz*plane+iy*v.cols+ix,cx=xx-ix,cy=(yy-iy)*v.cols,cz=(zz-iz)*plane;
+ const low=(1-fy)*((1-fx)*d[i]+fx*d[i+cx])+fy*((1-fx)*d[i+cy]+fx*d[i+cy+cx]);
+ const high=(1-fy)*((1-fx)*d[i+cz]+fx*d[i+cz+cx])+fy*((1-fx)*d[i+cz+cy]+fx*d[i+cz+cy+cx]);
+ return low*(1-fz)+high*fz;
+}
+function rRotate(p,pitch,yaw,roll){
+ let [x,y,z]=p,a=pitch*Math.PI/180,b=yaw*Math.PI/180,c=roll*Math.PI/180;
+ [y,z]=[y*Math.cos(a)-z*Math.sin(a),y*Math.sin(a)+z*Math.cos(a)];
+ [x,z]=[x*Math.cos(b)+z*Math.sin(b),-x*Math.sin(b)+z*Math.cos(b)];
+ return [x*Math.cos(c)-y*Math.sin(c),x*Math.sin(c)+y*Math.cos(c),z];
+}
+function reconstructionSpec(v,options){
+ const {plane,mode}=options,spacing=Number(options.spacing),slab=Number(options.slab),angles=options.angles||[0,0,0];
+ if(!['Axial','Coronal','Sagittal'].includes(plane)||!['MPR','MIP','MinIP','Average'].includes(mode)||!Number.isFinite(spacing)||spacing<.2||spacing>10||angles.some(a=>!Number.isFinite(a)||Math.abs(a)>180))throw Error('Invalid reconstruction settings.');
+ if(!Number.isFinite(slab)||slab<=0||slab>200)throw Error('Choose a slab thickness between 0 and 200 mm.');
+ let [row,col]=plane==='Axial'?[[1,0,0],[0,1,0]]:plane==='Coronal'?[[1,0,0],[0,0,-1]]:[[0,1,0],[0,0,-1]];
+ row=rRotate(row,...angles);col=rRotate(col,...angles);const normal=rCross(row,col);
+ const corners=[];for(const z of [0,v.depth-1])for(const y of [0,v.rows-1])for(const x of [0,v.cols-1])corners.push(rWorld(v,x,y,z));
+ const bounds=axis=>{const a=corners.map(p=>rDot(p,axis));return [Math.min(...a),Math.max(...a)];},bx=bounds(row),by=bounds(col),bz=bounds(normal);
+ const cols=Math.ceil((bx[1]-bx[0])/spacing)+1,rows=Math.ceil((by[1]-by[0])/spacing)+1,count=Math.ceil((bz[1]-bz[0])/spacing)+1;
+ if(cols>768||rows>768||count>2048)throw Error('Output grid is too large. Increase output spacing.');
+ const samples=mode==='MPR'?1:2*Math.ceil(slab/(2*Math.min(...v.spacing)))+1;if(samples>257)throw Error('This slab needs too many samples. Reduce the slab thickness.');
+ return {...options,row,col,normal,rows,cols,count,spacing,slab,samples,minimum:[bx[0],by[0],bz[0]],oblique:angles.some(a=>a!==0)};
+}
+function reconstructionGeometry(v,r,k){return {origin:r.row.map((q,i)=>q*r.minimum[0]+r.col[i]*r.minimum[1]+r.normal[i]*(r.minimum[2]+k*r.spacing)),row:r.row,col:r.col,normal:r.normal,spacing:[r.spacing,r.spacing],ref:v.ref,study:v.study};}
+async function buildReconstructionVolume(source,index,progress=()=>{}){
+ const key=source.memoryId;if(reconVolumes.has(key))return reconVolumes.get(key);
+ const v=volumeGeometry(source),used=[...reconVolumes.values()].reduce((n,a)=>n+a.data.byteLength,0);if(used+v.bytes>RECON_MAX_BYTES)throw Error('Reconstruction memory is full. Reload the study to choose a different source volume.');
+ v.data=new Uint16Array(v.rows*v.cols*v.depth);v.source=index;
+ for(let k=0;k<v.depth;k++){const a=await inflate(source.items[v.order[k]].o);if(a.length!==v.rows*v.cols)throw Error('Decoded frame dimensions do not match the source stack.');v.data.set(a,k*v.rows*v.cols);progress((k+1)/v.depth);}
+ reconVolumes.set(key,v);return v;
+}
+async function reconstructionPixels(s,k,enh,cancelled=()=>false){
+ const r=s.reconstruction,v=r.volume,mode=enh?r.mode:'MPR',key=k+':'+mode;
+ if(r.cache.has(key))return r.cache.get(key);
+ const work=async()=>{
+  if(cancelled())return null;
+  const g=s.geometry[k],out=new Uint16Array(s.rows*s.cols),start=rVoxel(v,g.origin),px=rVoxel(v,g.origin.map((q,i)=>q+g.row[i]*r.spacing)),py=rVoxel(v,g.origin.map((q,i)=>q+g.col[i]*r.spacing));
+  const dx=px.map((q,i)=>q-start[i]),dy=py.map((q,i)=>q-start[i]),n=[rDot(r.normal,v.row)/v.spacing[1],rDot(r.normal,v.col)/v.spacing[0],rDot(r.normal,v.normal)/v.spacing[2]],samples=mode==='MPR'?1:r.samples;
+  for(let y=0;y<s.rows;y++){
+   for(let x=0;x<s.cols;x++){const vx=start[0]+x*dx[0]+y*dy[0],vy=start[1]+x*dx[1]+y*dy[1],vz=start[2]+x*dx[2]+y*dy[2];let total=0,count=0,result=mode==='MinIP'?Infinity:-Infinity;
+    for(let z=0;z<samples;z++){const offset=samples===1?0:(z/(samples-1)-.5)*r.slab,value=rSample(v,vx+n[0]*offset,vy+n[1]*offset,vz+n[2]*offset);if(value===null)continue;
+     total+=value;count++;if(mode==='MinIP')result=Math.min(result,value);else result=Math.max(result,value);
+    }
+    out[y*s.cols+x]=count?Math.round(mode==='Average'?total/count:result):0;
+   }
+   if(y%8===0){await new Promise(resolve=>setTimeout(resolve,0));if(cancelled())return null;}
+  }
+  r.cache.set(key,out);if(r.cache.size>2)r.cache.delete(r.cache.keys().next().value);return out;
+ };
+ const job=reconQueue.then(work);reconQueue=job.catch(()=>{});return job;
+}
+function makeReconstructionSeries(source,v,options){
+ const spec=reconstructionSpec(v,options),geometry=Array.from({length:spec.count},(_,k)=>reconstructionGeometry(v,spec,k)),r={...spec,source:v.source};
+ Object.defineProperty(r,'volume',{value:v,enumerable:false});Object.defineProperty(r,'cache',{value:new Map(),enumerable:false});
+ const label=(spec.oblique?'Oblique ':'')+spec.plane+' '+spec.mode+(spec.mode==='MPR'?'':' · '+spec.slab+' mm');
+ return {...source,title:label,sequence:label+' · '+source.sequence,rows:spec.rows,cols:spec.cols,spacing:[spec.spacing,spec.spacing],thickness:spec.mode==='MPR'?spec.spacing:spec.slab,spacingKnown:true,plane:spec.oblique?'Oblique':spec.plane,geometry,pos:geometry.map(g=>rDot(g.origin,g.normal)),items:Array.from({length:spec.count},()=>({o:''})),reconstruction:r,derivedComposite:false,stationSignature:null,stationOriginalWL:null,stationMatch:null,restrictedCandidates:null,diffusionPair:null,hasEnh:spec.mode!=='MPR',streamed:false,volumeSupport:{reason:'Choose the original source stack.'},memoryId:'recon-'+Date.now()+'-'+Math.random().toString(36).slice(2),presentation:{default:source.wl.dicom?'dicom':'auto',field:null,base:source.presentation?.base||0},processing:{engine:label+' · interpolated from source',frames:[],applied:spec.count}};
+}
+async function decodeCatalogFrame(s,k,enh,cancelled=()=>false){return s.reconstruction?reconstructionPixels(s,k,enh,cancelled):inflate(enh&&s.items[k].e?s.items[k].e:s.items[k].o);}
+// RECONSTRUCTION_CORE_END
+
 // COMPOSE_CORE_START
 function composeDot(a,b){return a.reduce((s,v,k)=>s+v*b[k],0);}
 function composeSub(a,b){return a.map((v,k)=>v-b[k]);}
@@ -1391,11 +1527,11 @@ async function inflate(b64){
   return new Uint16Array(buf);
 }
 
-async function getFrame(i,idx,enh){
+async function getFrame(i,idx,enh,cancelled=()=>false){
   const s=P.series[i],st=S[i],key=idx+(enh?'e':'o'),cache=st.cache;
   if(cache.has(key)){const v=cache.get(key);cache.delete(key);cache.set(key,v);return v;}
-  const it=s.items[idx],arr=await inflate(enh&&it.e?it.e:it.o);
-  cache.set(key,arr);if(cache.size>40)cache.delete(cache.keys().next().value);
+  const arr=await decodeCatalogFrame(s,idx,enh,cancelled);if(!arr)return new Uint16Array(0);
+  cache.set(key,arr);if(cache.size>(s.reconstruction?4:40))cache.delete(cache.keys().next().value);
   return arr;
 }
 
@@ -1604,7 +1740,7 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)S.forEach((
 async function draw(i){
   const s=P.series[i],st=S[i];if(!s||st.panel.hidden)return;const tok=++st.tok;
   const view=st.holdOriginal?originalPresentation(s,st):st;
-  const useEnh=!st.holdOriginal&&!view.ctLike&&st.enh&&s.hasEnh,data=await getFrame(i,st.idx,useEnh);
+  const useEnh=!st.holdOriginal&&!view.ctLike&&st.enh&&s.hasEnh,data=await getFrame(i,st.idx,useEnh,()=>tok!==st.tok);
   if(tok!==st.tok)return;
   const w=s.cols,h=s.rows,oc=st.oc||(st.oc=$('canvas'));oc.width=w;oc.height=h;
   const octx=oc.getContext('2d'),img=octx.createImageData(w,h),px=img.data;
@@ -1657,8 +1793,8 @@ async function draw(i){
   ctx.shadowBlur=0;refreshMagnifier(i);
   if(i===hover){refreshOverlays();updateActiveSummary();}
   if(i===hover||!P.series.some((other,j)=>j!==i&&other===s&&!S[j].panel.hidden))rememberSeries(i);
-  st.stat.textContent=(st.candidateOverlay&&!st.holdOriginal?'RESEARCH OUTLINES · ':'')+'Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+(geom(i)?' · Loc: '+s.pos[st.idx].toFixed(1)+'mm':' · Position unavailable')+(st.rotation||st.flipH||st.flipV?' · '+Math.round(st.rotation||0)+'°'+(st.flipH?' FH':'')+(st.flipV?' FV':''):'')+' · W: '+Math.round(view.hi-view.lo)+' L: '+Math.round((view.hi+view.lo)/2)+
-    ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(view.wl==='balanced'&&!view.ctLike?' [BALANCED DISPLAY'+(s.presentation?.field?' · shading corrected':'')+']':'')+(st.holdOriginal?(s.derivedComposite?' [UNBALANCED SOURCE COMPOSITE]':' [HOLD ORIGINAL · DICOM source]'):view.ctLike?' [CT-like display · MRI source · experimental]':useEnh?' ['+s.processing.engine+' · '+(s.processing.frames[st.idx]||'processed')+']':(st.smooth||st.sharp?' [FILTERED SOURCE':' [SOURCE')+(s.processing?.reason?' · '+s.processing.reason:'')+']')+(!st.holdOriginal&&(st.smooth||st.sharp)?' · Smoothening '+st.smooth+' · Sharpening '+st.sharp:'');
+  st.stat.textContent=(st.candidateOverlay&&!st.holdOriginal?'RESEARCH OUTLINES · ':'')+'Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+(geom(i)?' · Loc: '+s.pos[st.idx].toFixed(1)+'mm':' · Position unavailable')+(s.reconstruction?' · '+s.reconstruction.mode+(s.reconstruction.mode==='MPR'?'':' '+s.reconstruction.slab+' mm · centre plane')+' · interpolated'+(s.reconstruction.volume.warning?' · source gaps':''):'')+(st.rotation||st.flipH||st.flipV?' · '+Math.round(st.rotation||0)+'°'+(st.flipH?' FH':'')+(st.flipV?' FV':''):'')+' · W: '+Math.round(view.hi-view.lo)+' L: '+Math.round((view.hi+view.lo)/2)+
+    ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(view.wl==='balanced'&&!view.ctLike?' [BALANCED DISPLAY'+(s.presentation?.field?' · shading corrected':'')+']':'')+(st.holdOriginal?(s.reconstruction?' [UNFILTERED THIN RECONSTRUCTION]':s.derivedComposite?' [UNBALANCED SOURCE COMPOSITE]':' [HOLD ORIGINAL · DICOM source]'):view.ctLike?' [CT-like display · MRI source · experimental]':useEnh?' ['+s.processing.engine+' · '+(s.processing.frames[st.idx]||'processed')+']':(st.smooth||st.sharp?' [FILTERED SOURCE':' [SOURCE')+(s.processing?.reason?' · '+s.processing.reason:'')+']')+(!st.holdOriginal&&(st.smooth||st.sharp)?' · Smoothening '+st.smooth+' · Sharpening '+st.sharp:'');
 }
 
 const drawAll=()=>{for(let i=0;i<N;i++)draw(i);};
@@ -1701,7 +1837,7 @@ async function roiStats(i,m,idx){
  const bins=new Array(64).fill(0),width=(mx-mn)/64;
  for(const v of values)bins[width?Math.min(63,Math.floor((v-mn)/width)):0]++;
  const peak=bins.indexOf(Math.max(...bins)),mode=width?mn+(peak+.5)*width:mn;
- m.txt=(s.derivedComposite?'Derived resampled composite':'Original pixels')+'\nMean: '+mean.toFixed(2)+' · SD: '+sd.toFixed(2)+'\nMedian: '+median.toFixed(2)+'\nMode (64 bins): '+mode.toFixed(2)+'\nMin/Max: '+mn.toFixed(2)+' / '+mx.toFixed(2)+'\nArea: '+(n*s.spacing[0]*s.spacing[1]).toFixed(2)+' mm²';draw(i);
+ m.txt=(s.reconstruction?'Thin resampled plane · projection excluded':s.derivedComposite?'Derived resampled composite':'Original pixels')+'\nMean: '+mean.toFixed(2)+' · SD: '+sd.toFixed(2)+'\nMedian: '+median.toFixed(2)+'\nMode (64 bins): '+mode.toFixed(2)+'\nMin/Max: '+mn.toFixed(2)+' / '+mx.toFixed(2)+'\nArea: '+(n*s.spacing[0]*s.spacing[1]).toFixed(2)+' mm²';draw(i);
 }
 
 const nearestMenu=$('div',{id:'nearest-image-menu',hidden:true,role:'menu',ariaLabel:'Image actions'});
@@ -1760,11 +1896,13 @@ const icons={
  text:'<path d="M5 5h14M12 5v15M8 20h8"/>',
  reset:'<path d="M4 9a8 8 0 1 1 0 7M4 4v5h5"/>',
  mpr:'<path d="M4 4h16v16H4ZM12 4v16M4 12h16"/>',
+ minip:'<path d="m3 8 9 5 9-5M3 12l9 5 9-5M3 16l9 5 9-5M12 2v7m-3-3 3 3 3-3"/>',
+ average:'<path d="M4 5h16M4 12h16M4 19h16M8 3v18M16 3v18"/>',
  mip:'<path d="m3 8 9-5 9 5-9 5ZM3 12l9 5 9-5M3 16l9 5 9-5"/>',
  stitch:'<path d="M11 2h3l1 2-1 2h-3l-1-2ZM10 7h4l1 2-1 1h-4L9 9ZM9 11h5l1 2-1 1H9l-1-1ZM10 15h5l1 2-1 1h-5l-1-1ZM11 19h4l1 2-3 2-3-2M5 2H3v8h2M19 14h2v8h-2"/><path d="M3 12h4M17 12h4" stroke-dasharray="1 2"/>',
  vr:'<path d="m4 7 8-4 8 4v10l-8 4-8-4ZM4 7l8 4 8-4M12 11v10"/>',
  roi:'<rect x="4" y="4" width="16" height="16" rx="1" stroke-dasharray="3 3"/><path d="M8 12h8M12 8v8"/>'};
-const toolDescriptions={pairadc:"Open the matched ADC image in another visible viewport at the corresponding slice.",suspect:"Show or hide untrained research outlines of suspected restricted diffusion; not a diagnosis.",flipH:'Mirror the active image left to right without changing its source coordinates.',flipV:'Mirror the active image top to bottom without changing its source coordinates.',wl:'Drag horizontally for width, vertically for level.',pan:'Drag to move the image.',zoom:'Drag or use Ctrl + scroll to zoom.',locate:'Click anatomy to locate the matching physical point in compatible open views.',pointer3d:'Click or drag on anatomy to show persistent crosshairs and matching slices in compatible open views.',rotate:'Drag left or right to freely rotate the active 2D image.',dist:'Drag between two points to measure physical distance.',angle:'Click endpoint, vertex, endpoint to measure an angle.',roi:'Draw a rectangle to measure source signal statistics.',ellipse:'Draw an ellipse to measure source signal statistics.',arrow:'Draw an arrow annotation.',text:'Enter annotation text, then click an image.',reset:'Restore zoom, pan, orientation and the default image window.',mpr:'Multiplanar reconstruction is not yet available.',mip:'Maximum intensity projection is not yet available.',vr:'Volume rendering is not yet available.',stitch:'Compose compatible overlapping images into a derived blended image.'};
+const toolDescriptions={pairadc:"Open the matched ADC image in another visible viewport at the corresponding slice.",suspect:"Show or hide untrained research outlines of suspected restricted diffusion; not a diagnosis.",flipH:'Mirror the active image left to right without changing its source coordinates.',flipV:'Mirror the active image top to bottom without changing its source coordinates.',wl:'Drag horizontally for width, vertically for level.',pan:'Drag to move the image.',zoom:'Drag or use Ctrl + scroll to zoom.',locate:'Click anatomy to locate the matching physical point in compatible open views.',pointer3d:'Click or drag on anatomy to show persistent crosshairs and matching slices in compatible open views.',rotate:'Drag left or right to freely rotate the active 2D image.',dist:'Drag between two points to measure physical distance.',angle:'Click endpoint, vertex, endpoint to measure an angle.',roi:'Draw a rectangle to measure source signal statistics.',ellipse:'Draw an ellipse to measure source signal statistics.',arrow:'Draw an arrow annotation.',text:'Enter annotation text, then click an image.',reset:'Restore zoom, pan, orientation and the default image window.',mpr:'Create linked axial, coronal, sagittal or oblique reconstructions from a compatible source stack.',mip:'Show the maximum source intensity sampled through an adjustable slab.',minip:'Show the minimum source intensity sampled through an adjustable slab.',average:'Show the mean source intensity sampled through an adjustable slab.',vr:'Volume rendering is not yet available.',stitch:'Compose compatible overlapping images into a derived blended image.'};
 
 function toolButton(x){
  const button=$('button',{className:'tool-button',title:x.l+' — '+(toolDescriptions[x.t]||'Choose this image operation.'),ariaLabel:x.l});
@@ -1783,7 +1921,45 @@ groups.forEach(([name,items])=>{
 });
 const fit=toolButton({t:'reset',l:'Fit / reset active viewport'});fit.onclick=()=>resetView(hover);toolG.append(fit);
 volumeTools.append($('div',{className:'rail-category',textContent:'3D'}));
-[{t:'mpr',l:'MPR'},{t:'mip',l:'MIP'},{t:'vr',l:'VR'}].forEach(x=>{const b=toolButton(x);b.disabled=true;b.title=x.l+' — volume reconstruction will be added in a later update';volumeTools.append(b);});
+[{t:'mpr',l:'MPR',mode:'MPR'},{t:'mip',l:'MIP',mode:'MIP'},{t:'minip',l:'MinIP',mode:'MinIP'},{t:'average',l:'Average projection',mode:'Average'},{t:'vr',l:'VR'}].forEach(x=>{const b=toolButton(x);b.disabled=x.t==='vr';if(b.disabled)b.title='VR — volume rendering is not included in the slab reconstruction tools.';else b.onclick=()=>openReconstruction(x.mode);volumeTools.append(b);});
+const reconstructionDialog=$('dialog');reconstructionDialog.style.cssText='color:#d4deea;background:#101923;border:1px solid #2b3b4d;border-radius:14px;width:min(620px,94vw);max-height:90vh;padding:22px';document.body.append(reconstructionDialog);
+function openReconstruction(initialMode='MPR'){
+ reconstructionDialog.replaceChildren();const active=P.series[hover],existing=active?.reconstruction;let busy=false;
+ const title=$('h3',{textContent:'Multiplanar & slab reconstruction'}),help=$('p',{textContent:'Uses original source pixels and DICOM physical coordinates. Thin MPR interpolates between slices; projection modes sample an adjustable slab. Source slice thickness limits detail.'}),list=$('select',{ariaLabel:'Source volume'});help.style.cssText='font-size:12px;line-height:1.7';
+ let eligible=0;catalog.forEach((s,k)=>{if(s.reconstruction||s.derivedComposite)return;let reason='';try{volumeGeometry(s);eligible++;}catch(e){reason=e.message;}list.append($('option',{value:String(k),textContent:s.title+(reason?' — '+reason:''),disabled:!!reason}));});
+ const selected=existing?.source??catalog.indexOf(active);if([...list.options].some(o=>!o.disabled&&Number(o.value)===selected))list.value=String(selected);else if(eligible)list.value=[...list.options].find(o=>!o.disabled).value;
+ const mode=$('select',{ariaLabel:'Projection mode'});['MPR','MIP','MinIP','Average'].forEach(v=>mode.append($('option',{value:v,textContent:{MPR:'Thin MPR',MIP:'MIP · maximum',MinIP:'MinIP · minimum',Average:'Average · mean'}[v]})));mode.value=initialMode;
+ const plane=$('select',{ariaLabel:'Reconstruction plane'});['Axial','Coronal','Sagittal'].forEach(v=>plane.append($('option',{value:v,textContent:v})));plane.value=existing?.plane||'Axial';
+ const slab=$('input',{type:'number',min:'.1',max:'200',step:'1',value:String(existing?.slab||10),ariaLabel:'Slab thickness in millimetres'}),spacing=$('input',{type:'number',min:'.2',max:'10',step:'.1',value:String(existing?.spacing||(()=>{try{return Math.max(.2,Math.min(...volumeGeometry(catalog[Number(list.value)]).spacing));}catch(e){return 1;}})()),ariaLabel:'Output spacing in millimetres'});
+ const angles=['Pitch','Yaw','Roll'].map((name,k)=>$('input',{type:'number',min:'-180',max:'180',step:'1',value:String(existing?.angles?.[k]||0),ariaLabel:name+' in degrees'}));
+ const orthogonal=$('input',{type:'checkbox',checked:!existing&&initialMode==='MPR',ariaLabel:'Open linked three-plane MPR layout'}),update=$('input',{type:'checkbox',checked:!!existing,disabled:!existing,ariaLabel:'Update the active reconstruction'});
+ const row=(label,control)=>{const r=$('label',null,[$('span',{textContent:label}),control]);r.style.cssText='display:flex;justify-content:space-between;gap:14px;margin:8px 0';control.style.maxWidth='68%';return r;};
+ const status=$('p',{role:'status',ariaLive:'polite'}),apply=$('button',{textContent:'Create reconstruction',disabled:!eligible}),close=$('button',{textContent:'Close'});
+ function controls(){slab.disabled=mode.value==='MPR';orthogonal.disabled=mode.value!=='MPR'||angles.some(a=>Number(a.value)!==0);if(orthogonal.disabled)orthogonal.checked=false;update.disabled=!existing||orthogonal.checked;apply.textContent=update.checked&&!update.disabled?'Update reconstruction':'Create reconstruction';}
+ list.onchange=()=>{try{const v=volumeGeometry(catalog[Number(list.value)]);spacing.value=String(Math.max(.2,Math.min(...v.spacing)));status.textContent=v.warning||'';}catch(e){status.textContent=e.message;}};
+ mode.onchange=orthogonal.onchange=update.onchange=controls;angles.forEach(a=>a.onchange=controls);controls();
+ close.onclick=()=>{if(!busy)reconstructionDialog.close();};reconstructionDialog.oncancel=e=>{if(busy)e.preventDefault();};
+ apply.onclick=async()=>{if(busy)return;busy=true;apply.disabled=true;close.disabled=true;
+ try{
+  const src=Number(list.value),source=catalog[src],target=hover,options={mode:mode.value,plane:plane.value,spacing:Number(spacing.value),slab:Number(slab.value),angles:angles.map(a=>Number(a.value))},three=orthogonal.checked&&!orthogonal.disabled;
+  const updating=update.checked&&!update.disabled,oldIndex=catalog.indexOf(P.series[target]);
+  if(catalog.filter(s=>s.reconstruction).length+(updating?0:three?3:1)>12)throw Error('Twelve reconstruction series are already open. Reload the study to start a new reconstruction workspace.');
+  const v=await buildReconstructionVolume(source,src,f=>{status.textContent='Preparing source volume · '+Math.round(f*100)+'%';});
+  const derived=(three?['Axial','Coronal','Sagittal']:[options.plane]).map(p=>makeReconstructionSeries(source,v,{...options,plane:p}));
+  status.textContent=(v.warning?v.warning+' ':'')+'Reconstructing initial plane…';await decodeCatalogFrame(derived[0],Math.floor(derived[0].pos.length/2),derived[0].hasEnh);if(derived[0].hasEnh)await decodeCatalogFrame(derived[0],Math.floor(derived[0].pos.length/2),false);
+  if(updating){const old=catalog[oldIndex];catalog[oldIndex]=derived[0];const oldCard=rail.querySelectorAll('.series-card')[oldIndex];oldCard?.remove();appendSeriesCard(derived[0],oldIndex);const card=rail.lastElementChild,before=rail.querySelectorAll('.series-card')[oldIndex];if(before&&card!==before)rail.insertBefore(card,before);S.forEach((st,j)=>{if(P.series[j]===old)st.assign(oldIndex);});activate(target);}
+  else{const indices=[];for(const d of derived){indices.push(catalog.length);catalog.push(d);appendSeriesCard(d,catalog.length-1);}if(three){setLayout(2,2);indices.forEach((k,j)=>S[j].assign(k));S[3].assign(src);activate(0);opt.refs=true;const refs=bar.querySelector('input[aria-label="Reference lines"]');if(refs)refs.checked=true;const pointer=toolG.querySelector('[data-tool="pointer3d"]');pointer?.click();pointer3D(0,(P.series[0].cols-1)/2,(P.series[0].rows-1)/2);}else S[target].assign(indices[0]);}
+  filterSeries();reconstructionDialog.close();
+ }catch(e){status.textContent=e.message;}finally{busy=false;apply.disabled=!eligible;close.disabled=false;}
+ };
+ if(eligible&&!existing)list.onchange();
+ reconstructionDialog.append(title,help,row('Source stack',list),row('Mode',mode),row('Plane',plane),row('Slab thickness · mm',slab),row('Output pixel spacing · mm',spacing));
+ angles.forEach((a,k)=>reconstructionDialog.append(row(['Oblique pitch · °','Oblique yaw · °','Oblique roll · °'][k],a)));
+ reconstructionDialog.append(row('Open linked 2×2 layout: three planes + source',orthogonal),row('Update active reconstruction',update),$('p',{textContent:'Original shows the unfiltered thin reformatted plane. Projection ROI values refer to that thin plane, not slab maxima/minima. Crosshairs mark the slab centre. VR remains separate.'}),apply,close,status);
+ if(!eligible)status.textContent='No compatible volume is available. Source stacks need at least three consistently spaced slices with complete geometry.';
+ reconstructionDialog.showModal();
+}
+
 const stitchButton=toolButton({t:'stitch',l:'Stitch'});stitchButton.title='Stitch / Compose overlapping anatomical images';stitchButton.classList.add('stitch-tool');volumeTools.append(stitchButton);
 const stitchDialog=$('dialog');stitchDialog.style.cssText='color:#d4deea;background:#101923;border:1px solid #2b3b4d;border-radius:8px;width:min(760px,94vw);max-height:90vh;padding:20px';document.body.append(stitchDialog);
 stitchButton.onclick=()=>{
@@ -1945,6 +2121,7 @@ P.series.forEach((item,i)=>{
   angleInput.oninput=()=>{const angle=Number(angleInput.value);if(Number.isFinite(angle)){st.rotation=((angle%360)+360)%360;draw(i);}};
   orientationMenu.append(angleInput);
   [['Rotate left','↶',()=>st.rotation=((st.rotation||0)+270)%360],['Rotate right','↷',()=>st.rotation=((st.rotation||0)+90)%360],['Flip horizontal','↔',()=>st.flipH=!st.flipH],['Flip vertical','↕',()=>st.flipV=!st.flipV],['Reset orientation','⟲',()=>{st.rotation=0;st.flipH=st.flipV=false;}]].forEach(([name,symbol,action])=>{const b=$('button',{textContent:symbol,title:name+' — change display orientation only',ariaLabel:name});b.onclick=()=>{action();st.syncDisplayUI();draw(i);};orientationMenu.append(b);});
+  const bRecon=toolButton({t:'mpr',l:'Reconstruction settings'});bRecon.disabled=!s.reconstruction;bRecon.onclick=()=>openReconstruction(s.reconstruction?.mode||'MPR');
   const bPair=toolButton({t:'pairadc',l:'Open paired ADC'});
   bPair.disabled=s.diffusionPair?.adc==null;
   bPair.onclick=()=>{const pair=s.diffusionPair;if(pair?.adc==null)return;const target=S.findIndex((v,j)=>j!==i&&!v.panel.hidden&&!P.series[j]);const j=target>=0?target:S.findIndex((v,j)=>j!==i&&!v.panel.hidden);if(j<0){readingNotice.textContent='Choose a layout with at least two visible viewports for paired ADC review.';return;}S[j].assign(pair.adc);S[j].idx=pair.frames[st.idx];draw(j);activate(i);};
@@ -1966,20 +2143,20 @@ P.series.forEach((item,i)=>{
   [['Contrast','ctContrast',.7,1.8,.05],['Edge emphasis','ctSharp',0,.5,.05]].forEach(([label,key,min,max,step])=>{const slider=$('input',{type:'range',min,max,step,value:st[key],ariaLabel:label});slider.oninput=()=>{st[key]=Number(slider.value);draw(i);};settings.append($('label',null,[document.createTextNode(label),slider]));});
   settings.style.cssText='font-size:10px;color:#91bdd4';
   st.togEnh=()=>bEnh.onclick();st.togInv=()=>bInv.onclick();st.togPlay=()=>bPlay.onclick();
-  pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,orientationMenu,bPair,bCandidates,filters.smooth,filters.sharp,bRst,bPlay,settings]),cv,stat);
+  pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh&&!s.reconstruction&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,orientationMenu,bRecon,bPair,bCandidates,filters.smooth,filters.sharp,bRst,bPlay,settings]),cv,stat);
   grid.append(pnl);st.header=pnl.querySelector(".hd");
   const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
   st.clear=()=>{endOriginal(i,false);st.filterCache=null;stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover){updateActiveSummary();refreshInspector(i);}};
   st.displayConfig=()=>({rotation:st.rotation,flipH:st.flipH,flipV:st.flipV,smooth:st.smooth,sharp:st.sharp,wl:sel.value,inv:st.inv,enh:st.enh,ctLike:st.ctLike,ctContrast:st.ctContrast,ctSharp:st.ctSharp});
   st.applyDisplay=c=>{st.rotation=Number.isFinite(c.rotation)?c.rotation:0;st.flipH=!!c.flipH;st.flipV=!!c.flipV;st.smooth=filterLevel(c.smooth);st.sharp=filterLevel(c.sharp);filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);sel.value=['balanced','auto','dicom','full','angio','dwi','vessels'].includes(c.wl)&&s.wl[c.wl]?c.wl:'auto';preset(i,sel.value);st.inv=!!c.inv;st.enh=!!c.enh&&s.hasEnh;bInv.className=st.inv?'on':'';bEnh.className=st.enh?'on':'';if(c.ctLike&&s.modality==='MR'){st.ctContrast=Math.max(.7,Math.min(1.8,Number(c.ctContrast)||1.25));st.ctSharp=Math.max(0,Math.min(.5,Number(c.ctSharp)||0));settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;bCT.onclick();}st.syncDisplayUI();draw(i);};
-  st.syncDisplayUI=()=>{bPair.disabled=s.diffusionPair?.adc==null;bPair.title='Open paired ADC — '+(s.diffusionPair?.status||'This image has no automatic ADC pair.');bCandidates.disabled=s.restrictedCandidates?.status!=='processed';bCandidates.title='Restricted-diffusion candidates — '+(s.restrictedCandidates?.reason||'Enable the research option in Diffusion review; original matched high-b DWI and ADC with explicit units are required.');bCandidates.classList.toggle('on',!!st.candidateOverlay);angleInput.value=String(Math.round(st.rotation||0));bOriginal.title=s.derivedComposite?'Original — hold to view the unbalanced source composite, still resampled and blended.':'Original — hold to bypass processing at the source DICOM window. Release to restore.';sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
+  st.syncDisplayUI=()=>{bRecon.disabled=!s.reconstruction;bRecon.title='Reconstruction settings — change plane, oblique angles, slab thickness or projection mode.';bPair.disabled=s.diffusionPair?.adc==null;bPair.title='Open paired ADC — '+(s.diffusionPair?.status||'This image has no automatic ADC pair.');bCandidates.disabled=s.restrictedCandidates?.status!=='processed';bCandidates.title='Restricted-diffusion candidates — '+(s.restrictedCandidates?.reason||'Enable the research option in Diffusion review; original matched high-b DWI and ADC with explicit units are required.');bCandidates.classList.toggle('on',!!st.candidateOverlay);angleInput.value=String(Math.round(st.rotation||0));bOriginal.title=s.reconstruction?'Original — hold to show the unfiltered thin reconstruction. The uploaded source stack remains available separately.':s.derivedComposite?'Original — hold to view the unbalanced source composite, still resampled and blended.':'Original — hold to bypass processing at the source DICOM window. Release to restore.';sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
   st.assign=(index)=>{
     if(P.series[i]===catalog[index]){activate(i);return;}
     endOriginal(i,false);stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
     st.tok++;s=catalog[index];P.series[i]=s;
     Object.assign(st,{idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null,matchPoint:null,ctLike:false,ctRestore:null,candidateOverlay:s.restrictedCandidates?.status==='processed',rotation:0,flipH:false,flipV:false,smooth:0,sharp:0,holdOriginal:false,filterCache:null});
     const restored=restoredState(index);if(restored)Object.assign(st,restored);
-    pnl.querySelector('.ttl').textContent=s.title+(s.hasEnh&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'');
+    pnl.querySelector('.ttl').textContent=s.title+(s.hasEnh&&!s.reconstruction&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'');
     sel.replaceChildren();['balanced','auto','dicom','full','angio','dwi','vessels'].forEach(n=>{if(s.wl[n])sel.append($('option',{value:n,textContent:({balanced:'Balanced display',angio:'Angiography',dwi:'DWI · infarct review',vessels:'Vessels'}[n]||'W/L '+n)}));});
     bEnh.title='Enhancement — toggle the prepared image processing. '+(s.processing?.engine||'');bCT.disabled=s.modality!=='MR';bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;st.syncDisplayUI();activate(i);draw(i);
   };
@@ -2051,7 +2228,7 @@ function appendSeriesCard(s,index){
  card.ondragstart=e=>{e.dataTransfer.setData('application/x-dicom-series',String(index));e.dataTransfer.effectAllowed='copy';};
  card.onclick=()=>S[hover].assign(index);rail.append(card);
  // Decode thumbnail independently from viewport assignment.
- (async()=>{const data=await inflate(s.items[Math.floor(s.pos.length/2)].o);thumb.width=s.cols;thumb.height=s.rows;const ctx=thumb.getContext('2d'),im=ctx.createImageData(s.cols,s.rows),[lo,hi]=s.wl.auto;for(let k=0;k<data.length;k++){let v=Math.max(0,Math.min(255,255*(val(s,data[k])-lo)/Math.max(1e-9,hi-lo)));if(s.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);})();
+ (async()=>{const data=await decodeCatalogFrame(s,Math.floor(s.pos.length/2),s.reconstruction&&s.hasEnh);thumb.width=s.cols;thumb.height=s.rows;const ctx=thumb.getContext('2d'),im=ctx.createImageData(s.cols,s.rows),[lo,hi]=s.wl.auto;for(let k=0;k<data.length;k++){let v=Math.max(0,Math.min(255,255*(val(s,data[k])-lo)/Math.max(1e-9,hi-lo)));if(s.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);})();
 }
 catalog.forEach(appendSeriesCard);
 setLayout(2,2);
@@ -2138,7 +2315,7 @@ def build_empty_workspace():
     def placeholder(name,key):
         svg='<svg viewBox="0 0 24 24" aria-hidden="true">'+paths.get(key,"")+'</svg>'
         return f'<button class="tool-button" disabled title="{name} — load a study to use this tool" aria-label="{name}">{svg}</button>'
-    tool_rail='<nav id="tool-rail" aria-label="Image tools"><div class="tool-scroll">'+''.join(placeholder(name,key) for name,key in [("Window / level","wl"),("Pan","pan"),("Zoom","zoom"),("3D pointer","pointer3d"),("Rotate image","rotate"),("Flip horizontal","flipH"),("Flip vertical","flipV"),("Distance","dist"),("Angle","angle"),("Rectangle ROI","roi"),("Ellipse ROI","ellipse"),("Arrow annotation","arrow"),("Text annotation","text")])+'</div><div class="tool-pinned">'+''.join(placeholder(name,key) for name,key in [("MPR","mpr"),("MIP","mip"),("VR","vr"),("Stitch / Compose","stitch")])+'</div></nav>'
+    tool_rail='<nav id="tool-rail" aria-label="Image tools"><div class="tool-scroll">'+''.join(placeholder(name,key) for name,key in [("Window / level","wl"),("Pan","pan"),("Zoom","zoom"),("3D pointer","pointer3d"),("Rotate image","rotate"),("Flip horizontal","flipH"),("Flip vertical","flipV"),("Distance","dist"),("Angle","angle"),("Rectangle ROI","roi"),("Ellipse ROI","ellipse"),("Arrow annotation","arrow"),("Text annotation","text")])+'</div><div class="tool-pinned">'+''.join(placeholder(name,key) for name,key in [("MPR","mpr"),("MIP","mip"),("MinIP","minip"),("Average projection","average"),("VR","vr"),("Stitch / Compose","stitch")])+'</div></nav>'
 
     fit_script = '<script>' + VIEWER_HTML.split('<script>')[1].split('const P=')[0] + '</script>'
     tools=tools.replace('<div class="brand-tag">IMAGE TOOLS</div>', '<button data-open-workflow title="Open study — upload a DICOM ZIP or change study and processing settings" aria-label="Open study"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6h7l2 3h9v11H3ZM3 9V4h7l2 2h8v3"/></svg></button>' )
@@ -2279,7 +2456,7 @@ def _cache_resource(fn):
     return st.cache_resource(show_spinner=False, max_entries=1, ttl=600)(fn) if st else fn
 
 @_cache_resource
-def load_index(file_hash, _zbytes, grouping_version="diffusion-separated-v2"):
+def load_index(file_hash, _zbytes, grouping_version="spatial-reconstruction-v3"):
     # Diffusion index v1: split DWI/ADC and known b-values before preparing images.
     # Cached work must never render UI or call callbacks that render UI.
     named, skipped = read_zip(_zbytes)
