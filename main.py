@@ -31,6 +31,7 @@ try:
 except ImportError:
     st = None
 
+APP_BUILD = "2026.10.17-stitch.2"
 MAX_PANELS = 6
 WORKSPACE_PAYLOAD_BUDGET = 96 * 1024 * 1024
 
@@ -992,6 +993,12 @@ html,body{height:100%;overflow:hidden}body{display:flex;flex-direction:column}
 .layout-picker{position:relative}.layout-menu{position:fixed;z-index:1000;background:#15212e;border:1px solid #435970;padding:12px;border-radius:5px;box-shadow:0 8px 24px #0009}
 .layout-matrix{display:grid;grid-template-columns:repeat(4,25px);gap:4px;margin-top:8px}.layout-cell{width:25px;height:25px;padding:0;background:#101720;border:1px solid #435970}.layout-cell.preview{background:#22546f;border-color:#55bcdf}
 #grid.dense .hd{padding:3px}.dense .hd button,.dense .hd select{padding:2px;font-size:9px}.dense .ttl{font-size:9px}.dense .st{padding:3px;font-size:8px;min-height:0}.dense .hd{gap:2px}
+
+#tool-rail{overflow:hidden}
+.tool-scroll{display:flex;flex-direction:column;align-items:center;gap:2px;overflow-y:auto;min-height:0;flex:1;width:100%}
+.tool-pinned{display:flex;flex-direction:column;align-items:center;gap:2px;flex-shrink:0;width:100%;border-top:1px solid #26313f;padding-top:3px;background:#101720}
+#tool-rail .stitch-tool{height:43px;flex-direction:column;gap:2px;padding:3px}
+#tool-rail .stitch-tool span{display:block;font-size:9px;line-height:11px}
 </style>
 
 <div id="bar">
@@ -1454,7 +1461,7 @@ function toolButton(x){
  button.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true">'+icons[x.t]+'</svg><span>'+x.l+'</span>';
  return button;
 }
-const toolG=document.getElementById('tool-rail');
+const toolRail=document.getElementById('tool-rail'),toolG=$('div',{className:'tool-scroll'}),volumeTools=$('div',{className:'tool-pinned'});toolRail.append(toolG,volumeTools);
 const toolStatus=$('span',{id:'tool-status',textContent:'Window / level · drag to adjust'});bar.append(toolStatus);
 const annotationInput=$('input',{id:'annotation-text',type:'text',placeholder:'Annotation text',maxLength:160,ariaLabel:'Annotation text'});annotationInput.hidden=true;bar.append(annotationInput);
 const groups=[['VIEW',[{t:'wl',l:'Window / level'},{t:'pan',l:'Pan'},{t:'zoom',l:'Zoom'},{t:'locate',l:'Locate point'}]],['MEASURE',[{t:'dist',l:'Distance'},{t:'angle',l:'Angle'}]],['ROI',[{t:'roi',l:'Rectangle ROI'},{t:'ellipse',l:'Ellipse ROI'}]],['NOTES',[{t:'arrow',l:'Arrow annotation'},{t:'text',l:'Text annotation'}]]];
@@ -1465,9 +1472,9 @@ groups.forEach(([name,items])=>{
  toolG.append($('div',{className:'rail-separator'}));
 });
 const fit=toolButton({t:'reset',l:'Fit / reset active viewport'});fit.onclick=()=>resetView(hover);toolG.append(fit);
-toolG.append($('div',{className:'rail-category',textContent:'3D'}));
-[{t:'mpr',l:'MPR'},{t:'mip',l:'MIP'},{t:'vr',l:'VR'}].forEach(x=>{const b=toolButton(x);b.disabled=true;b.title=x.l+' — volume reconstruction will be added in a later update';toolG.append(b);});
-const stitchButton=toolButton({t:'stitch',l:'Stitch'});stitchButton.title='Stitch / Compose overlapping anatomical images';toolG.append(stitchButton);
+volumeTools.append($('div',{className:'rail-category',textContent:'3D'}));
+[{t:'mpr',l:'MPR'},{t:'mip',l:'MIP'},{t:'vr',l:'VR'}].forEach(x=>{const b=toolButton(x);b.disabled=true;b.title=x.l+' — volume reconstruction will be added in a later update';volumeTools.append(b);});
+const stitchButton=toolButton({t:'stitch',l:'Stitch'});stitchButton.title='Stitch / Compose overlapping anatomical images';stitchButton.classList.add('stitch-tool');volumeTools.append(stitchButton);
 const stitchDialog=$('dialog');stitchDialog.style.cssText='color:#d4deea;background:#101923;border:1px solid #2b3b4d;border-radius:8px;width:min(760px,94vw);max-height:90vh;padding:20px';document.body.append(stitchDialog);
 stitchButton.onclick=()=>{
  stitchDialog.replaceChildren();let pending=null,busy=false;const selections=[];
@@ -1742,7 +1749,8 @@ def build_empty_workspace():
         title = "Ready for your next study" if i == 0 else "Viewport available"
         hint = "Open a DICOM ZIP from the study browser" if i == 0 else "Selected series will appear here"
         cells += f'<div class="panel"><div class="empty-canvas"><div class="corner">VIEWPORT {i+1:02d} / NO SERIES</div><div class="center">{icon}<b>{title}</b>{hint}</div><div class="bottom">W — &nbsp; L — &nbsp; / &nbsp; IMAGE —</div></div></div>'
-    tool_rail = '<nav id="tool-rail" aria-label="Image tools">' + ''.join(f'<button class="tool-button" disabled title="{name}: load a study first" aria-label="{name}">{symbol}</button>' for name, symbol in [('Window / level','◐'),('Pan','✥'),('Zoom','⊕'),('Distance','╱'),('Angle','∠'),('Rectangle ROI','□'),('Ellipse ROI','◯'),('Arrow annotation','↗'),('Text annotation','T'),('MPR','MPR'),('MIP','MIP'),('VR','VR')]) + '</nav>'
+    spine_icon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 2h3l1 2-1 2h-3l-1-2ZM10 7h4l1 2-1 1h-4L9 9ZM9 11h5l1 2-1 1H9l-1-1ZM10 15h5l1 2-1 1h-5l-1-1ZM11 19h4l1 2-3 2-3-2M5 2H3v8h2M19 14h2v8h-2"/></svg>'
+    tool_rail = '<nav id="tool-rail" aria-label="Image tools"><div class="tool-scroll">' + ''.join(f'<button class="tool-button" disabled title="{name}: load a study first" aria-label="{name}">{symbol}</button>' for name, symbol in [('Window / level','◐'),('Pan','✥'),('Zoom','⊕'),('Distance','╱'),('Angle','∠'),('Rectangle ROI','□'),('Ellipse ROI','◯'),('Arrow annotation','↗'),('Text annotation','T')]) + '</div><div class="tool-pinned">' + ''.join(f'<button class="tool-button" disabled title="{name}: load a study first">{name}</button>' for name in ['MPR','MIP','VR']) + '<button class="tool-button stitch-tool" disabled title="Stitch / Compose: load a study first" aria-label="Stitch / Compose">' + spine_icon + '<span>Stitch</span></button></div></nav>'
     fit_script = '<script>' + VIEWER_HTML.split('<script>')[1].split('const P=')[0] + '</script>'
     return theme + tools + '<div class="workspace">' + rail + tool_rail + '<div id="grid">' + cells + '</div></div><div class="workspace-footer"><span>No image data loaded</span><span>Window / level · Measurements · Linked scrolling · Cine</span></div>' + fit_script
 
@@ -1910,6 +1918,7 @@ def main():
         unsafe_allow_html=True,
     )
     sb = st.sidebar
+    sb.caption("Viewer build · " + APP_BUILD)
     sb.markdown("### Study browser")
     sb.caption("DICOM ARCHIVE · WORKFLOW UPDATE 14")
     up = sb.file_uploader("Open DICOM study", type=["zip"],
