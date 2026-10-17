@@ -31,7 +31,7 @@ try:
 except ImportError:
     st = None
 
-APP_BUILD = "2026.10.17-portrait.7"
+APP_BUILD = "2026.10.17-design.6"
 MAX_PANELS = 6
 WORKSPACE_PAYLOAD_BUDGET = 96 * 1024 * 1024
 
@@ -1286,11 +1286,6 @@ dialog{background:#142231!important;color:#dce7ef!important;border-color:#46667e
 @media(max-width:760px){.workspace{grid-template-columns:42px 110px minmax(0,1fr);gap:6px}#inspector{display:none}#series-rail{display:block;padding:14px 5px;border-radius:12px}.series-card{display:block;padding:5px}.series-card canvas{width:100%;height:52px}.series-card .name{margin-top:5px}.panel .hd>*:not(.ttl){display:initial}.workspace-footer{margin-left:0;font-size:10px}.viewer-stage{border-radius:12px}#bar{max-height:100px}.inspector-actions{display:none!important}}
 
 @media(max-width:760px){.panel .hd>.icon-select,.panel .hd>button{display:inline-flex}.panel .hd>details{display:block}}
-
-/* Portrait central workspace; source image orientation and canvas transforms are unchanged. */
-.workspace{container-type:size}
-.viewer-stage{justify-self:center;width:min(100%,max(120px,calc(72cqh - 48px)));height:100%;max-height:100%}
-@media(max-width:760px){.viewer-stage{width:min(100%,max(120px,calc(72cqh - 48px)))}}
 </style>
 
 <div class="workspace"><nav id="tool-rail" aria-label="Image tools"></nav><nav id="series-rail" aria-label="Loaded series"><div class="rail-heading">STUDY SERIES</div></nav><section class="viewer-stage" aria-label="Image workspace"><div id="bar"><button data-open-workflow title="Open study — upload a DICOM ZIP or change study and processing settings" aria-label="Open study"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6h7l2 3h9v11H3ZM3 9V4h7l2 2h8v3"/></svg></button><div class="brand-tag">IMAGE TOOLS</div></div><div id="grid"></div></section>__INSPECTOR__</div><div class="workspace-footer"><span>Scroll to browse · Ctrl / Cmd + scroll to zoom · Middle drag to pan</span><span>Double-click to expand · Hold Original to compare</span></div>
