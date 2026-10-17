@@ -31,7 +31,7 @@ try:
 except ImportError:
     st = None
 
-APP_BUILD = "2026.10.17-reconstruction.8"
+APP_BUILD = "2026.10.17-spatial-live.9"
 MAX_PANELS = 6
 WORKSPACE_PAYLOAD_BUDGET = 96 * 1024 * 1024
 
@@ -555,10 +555,13 @@ def payload_estimate(s, enhance=False):
 
 
 def cine_series(s):
-    return any(int(getattr(d, "NumberOfFrames", 1) or 1) > 1
-               or int(getattr(d, "NumberOfTemporalPositions", 1) or 1) > 1
-               or hasattr(d, "TriggerTime") or hasattr(d, "TemporalPositionIdentifier")
-               for d in s["items"])
+    # A timing tag may be constant on a static 3D acquisition. Presence is not motion.
+    items=s["items"]
+    if any(int(getattr(d,"NumberOfFrames",1) or 1)>1 or int(getattr(d,"NumberOfTemporalPositions",1) or 1)>1 for d in items):return True
+    for name in ("TemporalPositionIdentifier","TriggerTime"):
+        values={str(getattr(d,name)) for d in items if getattr(d,name,None) is not None}
+        if len(values)>1:return True
+    return False
 
 
 def stream_pack_series(s, progress=None):
@@ -701,14 +704,14 @@ def static_spatial_views(ds):
     """Expose enhanced static spatial frames while leaving cine/temporal objects intact."""
     n=int(getattr(ds,"NumberOfFrames",1) or 1)
     frames=getattr(ds,"PerFrameFunctionalGroupsSequence",[])
-    if n<3 or len(frames)!=n or str(getattr(ds,"Modality","")).upper() not in ("MR","CT"):return None
-    if int(getattr(ds,"NumberOfTemporalPositions",1) or 1)>1 or any(hasattr(ds,k) for k in ("TriggerTime","FrameTime","FrameTimeVector")):return None
+    if n<1 or len(frames)!=n or str(getattr(ds,"Modality","")).upper() not in ("MR","CT"):return None
+    if int(getattr(ds,"NumberOfTemporalPositions",1) or 1)>1:return None
     shareds=getattr(ds,"SharedFunctionalGroupsSequence",[]);shared=shareds[0] if shareds else None
     temporal=set();views=[]
     for index,frame in enumerate(frames):
         for content in getattr(frame,"FrameContentSequence",[]):
             temporal.add(int(getattr(content,"TemporalPositionIndex",1) or 1))
-        if len(temporal)>1 or getattr(frame,"CardiacSynchronizationSequence",None):return None
+        if len(temporal)>1:return None
         overrides={"NumberOfFrames":1,"InstanceNumber":index+1}
         for scope in (shared,frame):
             if scope is None:continue
@@ -1199,7 +1202,8 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
 # ----------------------------------------------------------------------------------------------------------------
 #  Diagnostic Interface Engine (Dark-Mode Workspace Layer)
 # ----------------------------------------------------------------------------------------------------------------
-INSPECTOR_HTML = r"""<aside id="inspector" aria-label="Active viewport settings"><div class="inspector-heading">Tools &amp; display</div><div class="inspector-kicker">ACTIVE VIEWPORT</div><div id="inspector-title">No active series</div><div id="inspector-controls" class="hd inspector-actions"></div><div id="inspector-empty" class="inspector-empty">Open a study to begin.<br>Select any viewport to access its display and review controls.</div><div class="inspector-help">Hover over an icon for its name and function.<br>Hold the eye icon to compare with Original.<br>Double-click an image to expand or restore its layout.</div><button class="inspector-settings" data-open-workflow title="Study &amp; processing settings — open upload, enhancement, Signal Balance, station matching and diffusion review" aria-label="Study and processing settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 3v8M16 13v8"/></svg></button></aside>"""
+WORKSTATION_HEADER_HTML = r"""<header id="workstation-header"><button class="workstation-brand" data-open-workflow title="SD-DCM — open study and processing settings"><svg viewBox="0 0 36 36" aria-hidden="true"><path d="M18 6c-7-6-17 3-12 10-6 7 2 15 9 11 4 7 14 3 12-5 8-4 4-15-3-15-1-3-4-4-6-1ZM18 6v23M8 12l19 10M8 23l16-12"/></svg><span>SD-DCM</span></button><button id="header-study" data-open-workflow title="Open study settings">Study workspace <span>⌄</span></button><div id="header-study-meta">MRI · Image review</div><div class="header-layouts"><button data-layout="2,2" title="2 × 2 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM12 3v18M3 12h18"/></svg><span>2x2</span></button><button data-layout="1,1" title="1 × 1 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3Z"/></svg><span>1x1</span></button><button data-layout="3,3" title="3 × 3 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM9 3v18M15 3v18M3 9h18M3 15h18"/></svg><span>3x3</span></button></div><details id="workspace-more"><summary aria-label="All viewer tools" title="All viewer tools — measurements, orientation, linking, layout and annotations">•••</summary><div id="bar"><div class="brand-tag">IMAGE TOOLS</div></div></details></header>"""
+INSPECTOR_HTML = r"""<aside id="inspector" aria-label="Active viewport settings"><div class="inspector-heading">Reconstruction <span>⌃</span></div><div id="inspector-title">No active series</div><section id="reconstruction-controls" hidden aria-label="Live reconstruction controls"></section><div id="inspector-controls" class="hd inspector-actions"></div><div id="inspector-empty" class="inspector-empty">Open a study to begin.<br>Select any viewport to access its display and review controls.</div><div class="inspector-help">Hover over an icon for its name and function.<br>Hold the eye icon to compare with Original.<br>Double-click an image to expand or restore its layout.</div><button class="inspector-settings" data-open-workflow title="Study &amp; processing settings — open upload, enhancement, Signal Balance, station matching and diffusion review" aria-label="Study and processing settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 3v8M16 13v8"/></svg></button></aside>"""
 
 VIEWER_HTML = r"""
 <style>
@@ -1334,9 +1338,99 @@ dialog{background:#142231!important;color:#dce7ef!important;border-color:#46667e
 @media(max-width:760px){.workspace{grid-template-columns:42px 110px minmax(0,1fr);gap:6px}#inspector{display:none}#series-rail{display:block;padding:14px 5px;border-radius:12px}.series-card{display:block;padding:5px}.series-card canvas{width:100%;height:52px}.series-card .name{margin-top:5px}.panel .hd>*:not(.ttl){display:initial}.workspace-footer{margin-left:0;font-size:10px}.viewer-stage{border-radius:12px}#bar{max-height:100px}.inspector-actions{display:none!important}}
 
 @media(max-width:760px){.panel .hd>.icon-select,.panel .hd>button{display:inline-flex}.panel .hd>details{display:block}}
+/* Midnight Cyan: glass belongs to chrome; image canvases remain neutral and opaque. */
+body{background:radial-gradient(ellipse at 8% 2%,#123248 0,transparent 48%),radial-gradient(ellipse at 97% 100%,#142b42 0,transparent 45%),#080f1b}
+.workspace{gap:12px;grid-template-columns:52px 208px minmax(0,1fr) 270px}
+#series-rail,#inspector{background:linear-gradient(145deg,#20364bc9,#101f32e8);border:1px solid #668eac47;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-radius:12px;box-shadow:inset 0 1px #d9f5ff0d,0 12px 35px #0003}
+.viewer-stage{border-radius:12px;border-color:#547a9659;box-shadow:0 12px 35px #0005}
+#bar{background:linear-gradient(100deg,#1c3549eb,#17283be8);border-bottom-color:#6995b53b}
+#grid{gap:5px;padding:5px;background:#080e18}.panel{border-radius:6px}.panel canvas{background:#000}
+.panel .hd{background:linear-gradient(100deg,#142638,#102031);border-color:#40627c4d}
+.panel.active-viewport{border-color:#60c7e6;box-shadow:0 0 0 1px #5bc4e529}
+#tool-rail .tool-button{border-radius:9px}.series-card.active{border-color:#65c9ea6b;background:linear-gradient(90deg,#23506999,#17354b99)}
+#inspector .inspector-actions>button,#inspector .inspector-actions>.icon-select{height:39px;border-radius:8px;background:linear-gradient(140deg,#28415890,#1a2f4380);border-color:#6688a13d}
+#reconstruction-controls{border-bottom:1px solid #769db23b;margin-bottom:16px;padding-bottom:12px}
+#reconstruction-controls h3{font-size:13px;font-weight:600;letter-spacing:.3px;color:#87def5;margin:0 0 9px}
+.recon-source{font-size:11px;color:#9cb4c8;line-height:1.6;overflow-wrap:anywhere;margin:0 0 12px}
+#inspector .recon-field{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px;padding:5px 0;cursor:default;font-size:12px;color:#c5d9e7}
+.recon-field>span{grid-column:1}.recon-field>output{grid-column:2;grid-row:1;font:11px ui-monospace,monospace;color:#85cfe8}
+#inspector .recon-field>input,#inspector .recon-field>select{grid-column:1/-1;grid-row:2;width:100%;min-width:0;max-width:100%;margin:0}
+#inspector .recon-field>input[type=range]{padding:0;border:0;background:transparent;height:16px;accent-color:#65cce9;cursor:ew-resize}
+.recon-field select{background:#12283b;border-color:#50728b66;border-radius:6px;padding:6px}
+.recon-status,.recon-error,.recon-note{font-size:11px;line-height:1.6;margin:10px 0 0;color:#91c9dc}.recon-error{color:#f1bc9b;overflow-wrap:anywhere}.recon-note{color:#8ba4b8;font-size:10px}
+.recon-reset{width:100%;margin-top:8px;font-size:11px;background:#17374c;border-color:#4d879c66;border-radius:6px}
+@media(max-width:1300px){.workspace{grid-template-columns:46px 170px minmax(0,1fr) 240px;gap:9px}}
+@media(max-width:1000px){.workspace{grid-template-columns:42px 130px minmax(0,1fr) 210px;gap:6px}}
+@media(max-width:760px){.workspace{grid-template-columns:38px 95px minmax(0,1fr);gap:5px}#inspector:has(#reconstruction-controls:not([hidden])){display:block;position:fixed;right:8px;top:65px;bottom:45px;width:240px;z-index:30;background:#142638f5}.inspector-heading{padding-bottom:10px}.workspace-footer{margin-left:0}}
+
+/* Approved A reference, measured against the 1536 × 1024 concept. */
+body{padding:0;background:#030b12;color:#d7e7f7;font-family:Arial,'Segoe UI',sans-serif;font-size:13px;gap:9px}
+#workstation-header{display:flex;align-items:center;height:51px;min-height:51px;flex-shrink:0;border:1px solid #233b4e;border-radius:12px;background:linear-gradient(110deg,#0d1b2a,#06111c 75%);position:relative;z-index:40}
+.workstation-brand{display:flex;align-items:center;gap:14px;align-self:stretch;width:173px;flex-shrink:0;border:0;border-right:1px solid #24384b;border-radius:11px;background:linear-gradient(100deg,#162b3c,#112031);font-size:17px;letter-spacing:.7px;padding:7px 19px;color:#e2efff}
+.workstation-brand svg{width:33px;height:33px;stroke:#55b9e6;fill:#56b8e51c;stroke-width:1;flex-shrink:0}
+#header-study{background:none;border:0;border-right:1px solid #1d3142;border-radius:0;font-size:16px;padding:9px 19px;white-space:nowrap;color:#eef5ff}#header-study span{font-size:13px;color:#afcde0;margin-left:8px}
+#header-study-meta{padding:0 16px;font-size:12px;color:#aec9e2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.header-layouts{display:flex;align-items:center;gap:5px;margin-right:36px}.header-layouts button{display:flex;align-items:center;gap:10px;border:1px solid transparent;background:none;padding:7px 10px;font-size:12px;border-radius:5px;color:#a8c8e2}.header-layouts svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1}.header-layouts button.on{background:#0b2637;border-color:#246381;color:#69d5fa}
+#workspace-more{position:static;margin-right:13px}#workspace-more>summary{list-style:none;color:#b6d7f1;font-size:18px;cursor:pointer;padding:9px}#workspace-more>summary::-webkit-details-marker{display:none}
+#workspace-more:not([open])>#bar{display:none}#workspace-more>#bar{position:absolute;right:0;top:57px;z-index:99;width:min(600px,90vw);height:auto;max-height:75vh;overflow:auto;display:flex;flex-wrap:wrap;border:1px solid #345369;border-radius:10px;background:#0e2031f5;padding:12px;box-shadow:0 16px 50px #000a}
+#bar .tool-scroll{display:flex;flex-wrap:wrap;flex-direction:row;max-height:none;width:100%;overflow:visible;gap:4px}#bar .tool-button{width:34px;height:34px;padding:7px}#bar .rail-separator{display:none}
+.workspace{grid-template-columns:68px 233px minmax(0,1fr) 304px;gap:9px;flex:1;min-height:0;overflow:hidden}
+#tool-rail{padding:0;overflow:auto;display:flex;align-items:stretch;background:linear-gradient(100deg,#0b1e2d,#07131e);border:1px solid #203b50;border-radius:11px}
+.tool-pinned{border:0;padding:0;gap:3px;align-items:stretch;flex:1}#tool-rail .tool-button{width:100%;height:78px;border:1px solid transparent;border-radius:8px;padding:12px 3px;display:flex;flex-direction:column;gap:8px;justify-content:center;color:#b2d0ec}
+#tool-rail .tool-button svg{width:26px;height:26px;stroke-width:1.2}#tool-rail .tool-button span,#tool-rail .stitch-tool span{display:block;font-size:12px;line-height:15px}#tool-rail .tool-button.on{background:linear-gradient(105deg,#133b53,#0e293b);border-color:#20759a;border-left:2px solid #59d6ff;color:#80ddff}
+#series-rail{padding:0;overflow:auto;border:1px solid #263f52;border-radius:11px;background:linear-gradient(105deg,#0b1b29,#08131e);box-shadow:none}
+.rail-heading{display:flex;align-items:center;gap:4px;padding:12px 13px;margin:0;border-bottom:1px solid #243b4f;letter-spacing:0;text-transform:none;font-size:15px;font-weight:400;color:#e3effc;height:44px}.rail-heading button{margin-left:auto;background:none;border:0;color:#9cc5e3;padding:0;font-size:20px}
+.series-card{display:grid;grid-template-columns:90px minmax(0,1fr);column-gap:9px;grid-template-rows:1fr 1fr;padding:5px 4px;min-height:112px;margin:0;border:1px solid transparent;border-bottom:1px solid #1d3345;border-radius:0;background:none}
+.series-card canvas{width:90px;height:100px;grid-row:1/3;background:#000;border-radius:5px;border:1px solid #31475a;object-fit:contain}.series-card .name{font-size:13px;line-height:1.5;color:#dbe9f9;align-self:end;-webkit-line-clamp:2}.series-card .meta{font-size:12px;color:#abc7dd;line-height:1.6;margin-top:4px}
+.series-card.active{border:1px solid #52c8f2;border-radius:6px;background:linear-gradient(100deg,#0d2d43,#102334);box-shadow:inset 2px 0 #4ed6ff}.series-card:hover{background:#112b3d}
+.viewer-stage{background:#000;border:0;border-radius:0;box-shadow:none;overflow:hidden}#grid{padding:0;gap:7px;background:#02080f;flex:1;min-height:0}
+.panel{border:1px solid #203d50;border-radius:5px;background:#000}.panel.active-viewport{border-color:#347e9d;box-shadow:none}.panel .hd{background:#000;border:0;padding:11px 16px;min-height:36px}.panel .ttl{font-size:14px;line-height:1.2;font-weight:400;color:#b9daf4}.panel canvas{background:#000}
+.st{position:absolute;bottom:4px;left:7px;right:7px;background:transparent;border:0;padding:1px 3px;font-size:9px;line-height:1.3;min-height:0;color:#7fa9c0;pointer-events:none;opacity:.8}
+#inspector{padding:16px 15px;border-radius:11px;border:1px solid #283f51;background:linear-gradient(105deg,#0b1b29,#07131f);box-shadow:none}
+.inspector-heading{display:flex;justify-content:space-between;align-items:center;font-size:16px;font-weight:400;color:#e6efff;letter-spacing:0;padding:0 0 18px;border-bottom:0}.inspector-heading::after{display:none}.inspector-heading span{color:#9cc8e5}
+#inspector-title,.inspector-help,.inspector-settings{display:none}#inspector .inspector-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;border-top:1px solid #264051;padding-top:12px}#inspector .inspector-actions>button,#inspector .inspector-actions>.icon-select{width:34px;height:32px;min-height:32px;background:#112638;border:1px solid #294254;border-radius:5px;order:3}
+#reconstruction-controls{margin:0;padding:0;border:0}#reconstruction-controls>h3,.recon-source{display:none}.recon-mode-tabs{display:flex;border:1px solid #264458;border-radius:5px;overflow:hidden;margin-bottom:20px}.recon-mode-tabs button{flex:1;min-width:0;padding:13px 4px;font-size:12px;background:#0c1d2c;border:0;border-right:1px solid #223e51;border-radius:0;color:#bed6ec}.recon-mode-tabs button:last-child{border:0}.recon-mode-tabs button.selected{background:#153c57;box-shadow:inset 0 0 0 1px #53bce8;color:#ecf8ff;border-radius:4px}
+#inspector .recon-field{padding:9px 0;gap:13px;font-size:14px;line-height:1.4}#inspector .recon-field>input[type=range]{height:17px;border-radius:0;accent-color:#50c5ed}#inspector .recon-field>output{font-size:12px;border:1px solid #2d4355;padding:6px 10px;border-radius:5px;background:#0a1724;min-width:63px;text-align:center}
+#inspector h4{font-size:14px;font-weight:400;color:#e0edfb;margin:0 0 14px}#reconstruction-controls>h4{border-top:1px solid #263f50;padding-top:19px;margin-top:14px}
+.recon-reset{width:auto;float:right;font-size:10px;padding:4px 7px;margin:2px 0 10px;background:transparent;border:0;color:#8fb5ce}
+.recon-advanced{clear:both;font-size:11px;margin-bottom:7px;color:#92bad2}.recon-advanced summary{cursor:pointer;font-size:11px}.recon-status,.recon-note{font-size:10px;line-height:1.4;margin:6px 0;color:#86a7bc}.recon-note{display:none}
+#inspector .reference-display{order:0;width:100%;padding:4px 0 0;background:none;border:0;display:block;flex:none}.reference-window{padding:9px 0 17px;margin-bottom:7px}.reference-wl-row{display:grid;grid-template-columns:22px 56px minmax(0,1fr);gap:9px;padding:4px 0 8px;font-size:13px}#inspector .reference-wl-row input{width:100%;min-width:0;font-size:13px;text-align:right;background:#0b1b29;border-color:#2d465a;padding:7px 6px}.reference-wl-row input[type=range]{padding:0!important;border:0!important;accent-color:#50c5ed;background:transparent!important}
+#inspector .reference-original{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:45px;min-height:45px;padding:10px;border-radius:6px;background:linear-gradient(110deg,#182e40,#142334);border:1px solid #2d465a;color:#e0edfc;font-size:13px;margin:5px 0 17px}
+.reference-filter{border-top:1px solid #294050;padding:16px 0 10px}.reference-filter h4{margin-bottom:12px!important}.filter-segments{display:flex;width:100%;border:1px solid #263f52;border-radius:6px;overflow:hidden}.filter-segments button{flex:1;min-width:0;border:0;border-right:1px solid #233c50;border-radius:0;font-size:13px;padding:10px 0;background:#0f2030;color:#bbd4ea}.filter-segments button:last-child{border:0}.filter-segments button.selected{background:#143d58;box-shadow:inset 0 0 0 1px #52bce9;border-radius:4px;color:#f2faff}
+.reference-display .icon-select{display:none!important}.workspace-footer{display:none}.inspector-empty{font-size:13px;color:#8ca9bf}
+@media(min-width:761px){.panel .hd>.reference-display{display:none}}
+@media(max-width:1300px){.workspace{grid-template-columns:60px 198px minmax(0,1fr) 270px;gap:8px}.series-card{grid-template-columns:73px minmax(0,1fr)}.series-card canvas{width:73px;height:88px}.series-card{min-height:100px}.header-layouts{margin-right:5px}#header-study-meta{padding:0 10px}.workstation-brand{width:158px}}
+@media(max-width:1050px){.workspace{grid-template-columns:52px 155px minmax(0,1fr) 232px;gap:6px}.series-card{grid-template-columns:53px minmax(0,1fr)}.series-card canvas{width:53px;height:73px}.series-card{min-height:86px}.series-card .name,.series-card .meta{font-size:11px}#tool-rail .tool-button{height:65px}#inspector{padding:13px 10px}#header-study-meta{display:none}.workstation-brand{width:150px}.recon-mode-tabs button{font-size:10px}}
+@media(max-width:760px){.workspace{grid-template-columns:45px 108px minmax(0,1fr);gap:5px}#tool-rail .tool-button{height:62px}#tool-rail .tool-button span{font-size:9px}.series-card{display:block;min-height:0;padding:5px}.series-card canvas{width:100%;height:65px}.header-layouts span{display:none}.header-layouts button{padding:6px}.header-layouts{margin-left:auto}.workstation-brand{width:auto;padding:5px 9px}.workstation-brand span{display:none}#header-study{font-size:12px;padding:6px 9px}.reference-display{width:100%}#inspector:has(#reconstruction-controls:not([hidden])){top:60px;bottom:6px}#inspector .reference-display{display:block}.panel .hd>.reference-display{display:none}}
+
+
+#inspector .reference-more-tools{order:4;width:100%;display:block!important;background:transparent!important;border:0!important;padding:8px 0!important;color:#88afc9}
+#inspector .reference-more-tools>summary{display:block!important;text-align:left;font-size:11px;min-height:20px;padding:4px 0}
+#inspector .reference-more-tools:not([open])>:not(summary){display:none!important}
+#inspector .reference-more-tools[open]{display:flex!important;flex-wrap:wrap;gap:6px}
+#inspector .reference-more-tools[open]>summary{width:100%}
+#inspector .reference-more-tools[open]>button{width:34px;height:32px;font-size:11px}
+#inspector .reference-more-tools[open]>.recon-advanced{width:100%;order:-1}
+#inspector .reference-more-tools[open]>.recon-reset{width:auto;order:-1}
+#inspector .inspector-actions{border:0;margin:0;padding:0}.recon-status:empty{display:none}
+#inspector .reference-display{padding-top:0}.reference-window{border-top:1px solid #253d50;margin-top:20px;padding-top:20px}
+#reconstruction-controls .recon-field{gap:13px;padding:6px 0 12px}#reconstruction-controls>h4{margin-top:12px;padding-top:19px}
+.st:not(.render-error){position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);padding:0}.st.render-error{display:block;background:#311c14;color:#ffd4bd;opacity:1;font-size:12px;z-index:5}
+#inspector input[type=range]{appearance:none;-webkit-appearance:none;background:transparent!important;height:18px;outline:none}
+#inspector input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:3px;background:#3b5066}
+#inspector input[type=range]::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:16px;height:16px;margin-top:-6px;border:1px solid #89e0ff;border-radius:50%;background:#50c3ed;box-shadow:0 0 6px #53c4ef18}
+#inspector input[type=range]:disabled::-webkit-slider-thumb{background:#49687c;border-color:#7193a7}
+#inspector .recon-field>input[type=range]{margin:0 0 4px}
+
+
+#inspector .reference-original svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.2}
+#inspector .recon-field>output{padding:5px 10px}.reference-filter{padding-bottom:7px}.reference-window{padding-bottom:12px}.reference-more-tools>summary{min-height:16px!important}
+#tool-rail .tool-button:focus-visible{outline-offset:-3px}
+
+.workstation-brand{white-space:nowrap}.series-card .meta{white-space:pre-line}
 </style>
 
-<div class="workspace"><nav id="tool-rail" aria-label="Image tools"></nav><nav id="series-rail" aria-label="Loaded series"><div class="rail-heading">STUDY SERIES</div></nav><section class="viewer-stage" aria-label="Image workspace"><div id="bar"><button data-open-workflow title="Open study — upload a DICOM ZIP or change study and processing settings" aria-label="Open study"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6h7l2 3h9v11H3ZM3 9V4h7l2 2h8v3"/></svg></button><div class="brand-tag">IMAGE TOOLS</div></div><div id="grid"></div></section>__INSPECTOR__</div><div class="workspace-footer"><span>Scroll to browse · Ctrl / Cmd + scroll to zoom · Middle drag to pan</span><span>Double-click to expand · Hold Original to compare</span></div>
+__WORKSTATION_HEADER__<div class="workspace"><nav id="tool-rail" aria-label="Image tools"></nav><nav id="series-rail" aria-label="Loaded series"><div class="rail-heading">Series <span id="series-count"></span><button data-open-workflow title="Series loading and study settings" aria-label="Series settings">☷</button></div></nav><section class="viewer-stage" aria-label="Image workspace"><div id="grid"></div></section>__INSPECTOR__</div><div class="workspace-footer"><span>Scroll to browse · Ctrl / Cmd + scroll to zoom · Middle drag to pan</span><span>Double-click to expand · Hold Original to compare</span></div>
 
 <script>
 function fitHost(){try{const host=window.frameElement;if(host){host.style.height=Math.max(300,window.parent.innerHeight-host.getBoundingClientRect().top-12)+'px';}}catch(e){}}
@@ -1350,18 +1444,21 @@ const P=__PAYLOAD__;
 const catalog=P.series;
 P.series=Array.from({length:16},(_,i)=>i<Math.min(4,catalog.length)?catalog[i]:null);
 const PH=__PANEL_H__, N=16;
+document.getElementById('series-count').textContent='('+catalog.length+')';
+document.getElementById('header-study-meta').textContent=P.patient||[...new Set(catalog.map(s=>s.modality))].join(' / ')+' · '+catalog.length+' series · Anonymous';
+document.querySelectorAll('[data-layout]').forEach(b=>b.onclick=()=>{const [rows,cols]=b.dataset.layout.split(',').map(Number);setLayout(rows,cols);});
 let layoutRows=2,layoutCols=2,expandedViewport=null,expandedLayout=null;
 const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null,ctLike:false,ctContrast:1.25,ctSharp:.25,ctRestore:null,candidateOverlay:s.restrictedCandidates?.status==='processed',rotation:0,flipH:false,flipV:false,smooth:0,sharp:0,holdOriginal:false,filterCache:null});});
 const opt={sync:true,link:false,tool:'wl',overlays:true,refs:true,viewLink:false};
 // RECONSTRUCTION_CORE_START
-const RECON_MAX_BYTES=64*1024*1024,reconVolumes=new Map();let reconQueue=Promise.resolve();
+const RECON_MAX_BYTES=256*1024*1024,reconVolumes=new Map(),reconLoading=new Map();let reconQueue=Promise.resolve();
 const rDot=(a,b)=>a.reduce((s,v,k)=>s+v*b[k],0),rSub=(a,b)=>a.map((v,k)=>v-b[k]);
 function rCross(a,b){return [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];}
 function volumeGeometry(s){
  if(s.reconstruction||s.derivedComposite)throw Error('Choose an original source stack.');
  if(!['MR','CT'].includes(s.modality))throw Error('Reconstruction currently supports scalar MR and CT stacks.');
  if(s.volumeSupport?.reason)throw Error(s.volumeSupport.reason);
- const gs=s.geometry||[];if(gs.length!==s.items.length||gs.length<3||gs.some(g=>!g))throw Error('At least three slices with complete DICOM geometry are required.');
+ const gs=s.geometry||[];if(s.items.length<3)throw Error('The active stack contains '+s.items.length+' image(s); at least three spatial slices are needed.');if(gs.length!==s.items.length||gs.some(g=>!g))throw Error('Spatial geometry is missing for '+(s.items.length-gs.filter(Boolean).length)+' of '+s.items.length+' images. ImagePositionPatient, ImageOrientationPatient, PixelSpacing and frame/study identifiers must be available per image.');
  const g=gs[0];if(Math.abs(rDot(g.row,g.row)-1)>.001||Math.abs(rDot(g.col,g.col)-1)>.001||Math.abs(rDot(g.row,g.col))>.001||rCross(g.row,g.col).some((x,k)=>Math.abs(x-g.normal[k])>.001))throw Error('Invalid orientation basis.');if(!g.ref||!g.study||g.spacing.some(v=>!Number.isFinite(v)||v<=0))throw Error('Invalid source geometry.');
  for(const h of gs){
   if(h.ref!==g.ref||h.study!==g.study||h.spacing.some((v,k)=>Math.abs(v-g.spacing[k])>.001)||h.row.some((v,k)=>Math.abs(v-g.row[k])>1e-4)||h.col.some((v,k)=>Math.abs(v-g.col[k])>1e-4))throw Error('Mixed orientation, spacing, study or frame of reference.');
@@ -1371,7 +1468,7 @@ function volumeGeometry(s){
  if(!Number.isFinite(step)||step<.01||gaps.some(v=>v<.01||Math.abs(v-step)>Math.max(.05,step*.02)))throw Error('Duplicate positions, missing slices or irregular spacing. Separate repeated acquisitions before reconstruction.');
  const first=gs[sorted[0].index];
  if(gs.some(h=>{const d=rSub(h.origin,first.origin);return Math.hypot(rDot(d,first.row),rDot(d,first.col))>.1;}))throw Error('Sheared or shifted slice origins are not supported.');
- const bytes=s.rows*s.cols*gs.length*2;if(bytes>RECON_MAX_BYTES)throw Error('This stack exceeds the 64 MiB reconstruction memory limit.');
+ const bytes=s.rows*s.cols*gs.length*2;if(bytes>RECON_MAX_BYTES)throw Error('This decoded volume exceeds the 256 MiB reconstruction working-memory limit (the archive size is different).');
  return {origin:[...first.origin],row:[...first.row],col:[...first.col],normal:[...first.normal],spacing:[...first.spacing,step],rows:s.rows,cols:s.cols,depth:gs.length,order:sorted.map(v=>v.index),ref:g.ref,study:g.study,bytes,warning:s.volumeSupport?.sliceThickness&&step>s.volumeSupport.sliceThickness+.05?'Source slice gaps are present; interpolation spans unsampled gaps.':''};
 }
 function rWorld(v,x,y,z){return v.origin.map((q,k)=>q+x*v.spacing[1]*v.row[k]+y*v.spacing[0]*v.col[k]+z*v.spacing[2]*v.normal[k]);}
@@ -1407,24 +1504,33 @@ function reconstructionSpec(v,options){
 function reconstructionGeometry(v,r,k){return {origin:r.row.map((q,i)=>q*r.minimum[0]+r.col[i]*r.minimum[1]+r.normal[i]*(r.minimum[2]+k*r.spacing)),row:r.row,col:r.col,normal:r.normal,spacing:[r.spacing,r.spacing],ref:v.ref,study:v.study};}
 async function buildReconstructionVolume(source,index,progress=()=>{}){
  const key=source.memoryId;if(reconVolumes.has(key))return reconVolumes.get(key);
- const v=volumeGeometry(source),used=[...reconVolumes.values()].reduce((n,a)=>n+a.data.byteLength,0);if(used+v.bytes>RECON_MAX_BYTES)throw Error('Reconstruction memory is full. Reload the study to choose a different source volume.');
- v.data=new Uint16Array(v.rows*v.cols*v.depth);v.source=index;
- for(let k=0;k<v.depth;k++){const a=await inflate(source.items[v.order[k]].o);if(a.length!==v.rows*v.cols)throw Error('Decoded frame dimensions do not match the source stack.');v.data.set(a,k*v.rows*v.cols);progress((k+1)/v.depth);}
- reconVolumes.set(key,v);return v;
+ if(reconLoading.has(key))return reconLoading.get(key);
+ const job=(async()=>{
+  const v=volumeGeometry(source);
+  // Drop only volumes no longer referenced by a reconstruction. Never invalidate live views.
+  for(const [id,cached] of reconVolumes)if(!catalog.some(s=>s.reconstruction?.volume===cached))reconVolumes.delete(id);
+  const used=[...reconVolumes.values()].reduce((n,a)=>n+a.data.byteLength,0);
+  if(used+v.bytes>RECON_MAX_BYTES)throw Error('The reconstruction working-memory budget is in use by other source volumes. Existing images remain available.');
+  v.data=new Uint16Array(v.rows*v.cols*v.depth);v.source=index;
+  for(let k=0;k<v.depth;k++){const a=await inflate(source.items[v.order[k]].o);if(a.length!==v.rows*v.cols)throw Error('Decoded frame dimensions do not match the source stack.');v.data.set(a,k*v.rows*v.cols);progress((k+1)/v.depth);}
+  reconVolumes.set(key,v);return v;
+ })();reconLoading.set(key,job);try{return await job;}finally{reconLoading.delete(key);}
 }
+
 async function reconstructionPixels(s,k,enh,cancelled=()=>false){
- const r=s.reconstruction,v=r.volume,mode=enh?r.mode:'MPR',key=k+':'+mode;
+ const r=s.reconstruction,v=r.volume,mode=enh?r.mode:'MPR',key=k+':'+mode+':'+(enh&&r.preview?'preview':'full');
  if(r.cache.has(key))return r.cache.get(key);
  const work=async()=>{
   if(cancelled())return null;
   const g=s.geometry[k],out=new Uint16Array(s.rows*s.cols),start=rVoxel(v,g.origin),px=rVoxel(v,g.origin.map((q,i)=>q+g.row[i]*r.spacing)),py=rVoxel(v,g.origin.map((q,i)=>q+g.col[i]*r.spacing));
-  const dx=px.map((q,i)=>q-start[i]),dy=py.map((q,i)=>q-start[i]),n=[rDot(r.normal,v.row)/v.spacing[1],rDot(r.normal,v.col)/v.spacing[0],rDot(r.normal,v.normal)/v.spacing[2]],samples=mode==='MPR'?1:r.samples;
-  for(let y=0;y<s.rows;y++){
-   for(let x=0;x<s.cols;x++){const vx=start[0]+x*dx[0]+y*dy[0],vy=start[1]+x*dx[1]+y*dy[1],vz=start[2]+x*dx[2]+y*dy[2];let total=0,count=0,result=mode==='MinIP'?Infinity:-Infinity;
+  const dx=px.map((q,i)=>q-start[i]),dy=py.map((q,i)=>q-start[i]),n=[rDot(r.normal,v.row)/v.spacing[1],rDot(r.normal,v.col)/v.spacing[0],rDot(r.normal,v.normal)/v.spacing[2]],samples=mode==='MPR'?1:(r.preview?Math.min(17,r.samples):r.samples),stride=enh&&r.preview?2:1;
+  for(let y=0;y<s.rows;y+=stride){
+   for(let x=0;x<s.cols;x+=stride){const vx=start[0]+x*dx[0]+y*dy[0],vy=start[1]+x*dx[1]+y*dy[1],vz=start[2]+x*dx[2]+y*dy[2];let total=0,count=0,result=mode==='MinIP'?Infinity:-Infinity;
     for(let z=0;z<samples;z++){const offset=samples===1?0:(z/(samples-1)-.5)*r.slab,value=rSample(v,vx+n[0]*offset,vy+n[1]*offset,vz+n[2]*offset);if(value===null)continue;
      total+=value;count++;if(mode==='MinIP')result=Math.min(result,value);else result=Math.max(result,value);
     }
-    out[y*s.cols+x]=count?Math.round(mode==='Average'?total/count:result):0;
+    const pixel=count?Math.round(mode==='Average'?total/count:result):0;
+    for(let yy=y;yy<Math.min(s.rows,y+stride);yy++)for(let xx=x;xx<Math.min(s.cols,x+stride);xx++)out[yy*s.cols+xx]=pixel;
    }
    if(y%8===0){await new Promise(resolve=>setTimeout(resolve,0));if(cancelled())return null;}
   }
@@ -1571,8 +1677,19 @@ function referenceSegment(source,target,w,h){if(!compatible(source,target)||Math
  if(Math.abs(B)>1e-9){add(0,-C/B);add(w-1,(-C-A*(w-1))/B);}if(Math.abs(A)>1e-9){add(-C/A,0);add((-C-B*(h-1))/A,h-1);}
  return points.length>=2?points.slice(0,2):null;
 }
+function drawClinicalFrame(i,ctx,dpr){
+ const s=P.series[i],st=S[i],g=geom(i);if(!opt.overlays||!g||!st.lay)return;
+ const w=st.cv.width,h=st.cv.height;ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.font=(11*dpr)+'px Arial,sans-serif';ctx.fillStyle='#b8d7ef';ctx.shadowColor='#000';ctx.shadowBlur=3*dpr;
+ const centre=[w/(2*dpr),h/(2*dpr)],zero=toImage(st,...centre),direction=(dx,dy)=>{const p=toImage(st,centre[0]+dx,centre[1]+dy),v=g.row.map((q,k)=>(p[0]-zero[0])*g.spacing[1]*q+(p[1]-zero[1])*g.spacing[0]*g.col[k]),norm=Math.hypot(...v);return v.map((q,k)=>({q:Math.abs(q)/norm,label:q>0?['L','P','S'][k]:['R','A','I'][k]})).filter(a=>a.q>.2).sort((a,b)=>b.q-a.q).map(a=>a.label).join('');};
+ ctx.textAlign='center';ctx.fillText(direction(0,-1),w/2,14*dpr);ctx.fillText(direction(0,1),w/2,h-9*dpr);ctx.textAlign='left';ctx.fillText(direction(-1,0),8*dpr,h/2);ctx.textAlign='right';ctx.fillText(direction(1,0),w-8*dpr,h/2);
+ const r=s.reconstruction,title=r?catalog[r.source].sequence:s.sequence,lines=[r?r.mode:'',String(title||s.title).slice(0,35),'S: '+(st.idx+1)+' / '+s.pos.length,(r&&r.mode!=='MPR'?r.slab:s.thickness||s.spacing[0]).toFixed(1)+' mm'+(r?.preview?' · PREVIEW':'')];
+ lines.filter(Boolean).forEach((line,k)=>ctx.fillText(line,w-11*dpr,(13+k*15)*dpr));
+ const y=toImage(st,centre[0],centre[1]+1),mmPerPixel=Math.hypot((y[0]-zero[0])*g.spacing[1],(y[1]-zero[1])*g.spacing[0]),maxLength=h*.42/dpr*mmPerPixel;
+ const length=[10,20,50,100,200].filter(v=>v<=maxLength).pop();if(length){const pixels=length/mmPerPixel*dpr,x=w-18*dpr,top=(h-pixels)/2;ctx.strokeStyle='#6cb0d3';ctx.lineWidth=.7*dpr;ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,top+pixels);for(let j=0;j<=10;j++){const yy=top+j*pixels/10;ctx.moveTo(x,yy);ctx.lineTo(x-(j%5===0?7:4)*dpr,yy);}ctx.stroke();ctx.fillText(length+' mm',w-11*dpr,top+pixels+18*dpr);}
+ ctx.restore();
+}
 function drawReferences(i,ctx,dpr){if(!opt.refs||i===hover)return;const seg=referenceSegment(geom(hover),geom(i),P.series[i].cols,P.series[i].rows);if(!seg)return;
- const a=toScreen(S[i],...seg[0]),b=toScreen(S[i],...seg[1]);ctx.strokeStyle='#fbbf24';ctx.lineWidth=1.2*dpr;ctx.setLineDash([6*dpr,3*dpr]);ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();ctx.setLineDash([]);
+ const a=toScreen(S[i],...seg[0]),b=toScreen(S[i],...seg[1]);ctx.strokeStyle='#5bbedb';ctx.lineWidth=.8*dpr;ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();ctx.setLineDash([]);
 }
 function locatePoint(i,x,y){const source=geom(i);if(!source){readingNotice.textContent='Locate unavailable: this image has no supported DICOM geometry.';return;}
  const p=patientPoint(source,x,y);let count=0;for(let j=0;j<N;j++){if(j===i||!P.series[j]||S[j].panel.hidden||S[j].holdOriginal)continue;const k=nearestSlice(P.series[j],source,p,false);if(k>=0){cancelAngle(j);S[j].idx=k;count++;}}
@@ -1604,7 +1721,8 @@ let markerTimer;
 function markCorrespondence(i,point){const st=S[i];st.matchPoint={point,idx:st.idx,expires:performance.now()+4500};}
 function expireMarkers(){clearTimeout(markerTimer);markerTimer=setTimeout(()=>{S.forEach(st=>st.matchPoint=null);drawAll();},4600);}
 function drawPointMarker(i,ctx,dpr){const st=S[i],m=st.matchPoint,g=geom(i);if(!opt.overlays||!m||m.idx!==st.idx||!g||performance.now()>m.expires)return;
- const xy=imagePoint(g,m.point),p=toScreen(st,...xy);ctx.strokeStyle='#63c5e7';ctx.lineWidth=1.5*dpr;ctx.beginPath();
+ const xy=imagePoint(g,m.point),p=toScreen(st,...xy);ctx.strokeStyle='#63c5e7';ctx.lineWidth=.8*dpr;ctx.beginPath();
+ if(m.expires===Infinity){const s=P.series[i],points=[[0,xy[1]],[s.cols-1,xy[1]],[xy[0],0],[xy[0],s.rows-1]].map(v=>toScreen(st,...v));ctx.moveTo(...points[0]);ctx.lineTo(...points[1]);ctx.moveTo(...points[2]);ctx.lineTo(...points[3]);ctx.stroke();return;}
  for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){ctx.moveTo(p[0]+dx*4*dpr,p[1]+dy*4*dpr);ctx.lineTo(p[0]+dx*12*dpr,p[1]+dy*12*dpr);}ctx.stroke();
 }
 function refreshMagnifier(i){const st=S[i],s=P.series[i],pos=st.lensPos,lens=st.lens;
@@ -1732,16 +1850,17 @@ function filterPixels(src,w,h,smooth,sharp,range,noise){
  }return out;
 }
 function originalPresentation(s,st){s=s.stationOriginalWL?{...s,wl:s.stationOriginalWL}:s;const wl=s.wl.dicom?'dicom':'auto',bounds=s.wl[wl];return {...st,wl,lo:bounds[0],hi:bounds[1],inv:!!s.invert,ctLike:false};}
-function endOriginal(i,redraw=true){const st=S[i];if(!st.holdOriginal)return;st.holdOriginal=false;st.originalButton.className='';st.originalButton.setAttribute('aria-pressed','false');if(redraw&&P.series[i])draw(i);}
+function endOriginal(i,redraw=true){const st=S[i];if(!st.holdOriginal)return;st.holdOriginal=false;st.originalButton.classList.remove('on');st.originalButton.setAttribute('aria-pressed','false');if(redraw&&P.series[i])draw(i);}
 window.addEventListener('pointerup',()=>S.forEach((st,i)=>endOriginal(i)));
 window.addEventListener('pointercancel',()=>S.forEach((st,i)=>endOriginal(i)));
 window.addEventListener('blur',()=>S.forEach((st,i)=>endOriginal(i)));
 document.addEventListener('visibilitychange',()=>{if(document.hidden)S.forEach((st,i)=>endOriginal(i));});
 async function draw(i){
   const s=P.series[i],st=S[i];if(!s||st.panel.hidden)return;const tok=++st.tok;
+  st.stat.classList.remove('render-error');st.refreshReferenceDisplay?.();
   const view=st.holdOriginal?originalPresentation(s,st):st;
-  const useEnh=!st.holdOriginal&&!view.ctLike&&st.enh&&s.hasEnh,data=await getFrame(i,st.idx,useEnh,()=>tok!==st.tok);
-  if(tok!==st.tok)return;
+  const useEnh=!st.holdOriginal&&!view.ctLike&&st.enh&&s.hasEnh;let data;try{data=await getFrame(i,st.idx,useEnh,()=>tok!==st.tok);}catch(e){if(tok===st.tok){st.stat.classList.add('render-error');st.stat.textContent='Could not render this plane: '+e.message;}return;}
+  if(tok!==st.tok||!data.length)return;
   const w=s.cols,h=s.rows,oc=st.oc||(st.oc=$('canvas'));oc.width=w;oc.height=h;
   const octx=oc.getContext('2d'),img=octx.createImageData(w,h),px=img.data;
   const rng=Math.max(1e-9,view.hi-view.lo),inv=view.inv;
@@ -1789,11 +1908,11 @@ async function draw(i){
       else{ctx.fillRect(x1-3*dpr,y1-3*dpr,6*dpr,6*dpr);ctx.fillRect(x2-3*dpr,y2-3*dpr,6*dpr,6*dpr);ctx.fillText(mm(s,m).toFixed(2)+' mm',x2+8*dpr,y2+12*dpr);}
     }
   }
-  drawReferences(i,ctx,dpr);drawPointMarker(i,ctx,dpr);
+  drawReferences(i,ctx,dpr);drawPointMarker(i,ctx,dpr);drawClinicalFrame(i,ctx,dpr);
   ctx.shadowBlur=0;refreshMagnifier(i);
   if(i===hover){refreshOverlays();updateActiveSummary();}
   if(i===hover||!P.series.some((other,j)=>j!==i&&other===s&&!S[j].panel.hidden))rememberSeries(i);
-  st.stat.textContent=(st.candidateOverlay&&!st.holdOriginal?'RESEARCH OUTLINES · ':'')+'Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+(geom(i)?' · Loc: '+s.pos[st.idx].toFixed(1)+'mm':' · Position unavailable')+(s.reconstruction?' · '+s.reconstruction.mode+(s.reconstruction.mode==='MPR'?'':' '+s.reconstruction.slab+' mm · centre plane')+' · interpolated'+(s.reconstruction.volume.warning?' · source gaps':''):'')+(st.rotation||st.flipH||st.flipV?' · '+Math.round(st.rotation||0)+'°'+(st.flipH?' FH':'')+(st.flipV?' FV':''):'')+' · W: '+Math.round(view.hi-view.lo)+' L: '+Math.round((view.hi+view.lo)/2)+
+  st.stat.textContent=(st.candidateOverlay&&!st.holdOriginal?'RESEARCH OUTLINES · ':'')+'Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+(geom(i)?' · Loc: '+s.pos[st.idx].toFixed(1)+'mm':' · Position unavailable')+(s.reconstruction?' · '+s.reconstruction.mode+(s.reconstruction.mode==='MPR'?'':' '+s.reconstruction.slab+' mm · centre plane')+(s.reconstruction.preview?' · interactive preview':' · interpolated')+(s.reconstruction.volume.warning?' · source gaps':''):'')+(st.rotation||st.flipH||st.flipV?' · '+Math.round(st.rotation||0)+'°'+(st.flipH?' FH':'')+(st.flipV?' FV':''):'')+' · W: '+Math.round(view.hi-view.lo)+' L: '+Math.round((view.hi+view.lo)/2)+
     ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(view.wl==='balanced'&&!view.ctLike?' [BALANCED DISPLAY'+(s.presentation?.field?' · shading corrected':'')+']':'')+(st.holdOriginal?(s.reconstruction?' [UNFILTERED THIN RECONSTRUCTION]':s.derivedComposite?' [UNBALANCED SOURCE COMPOSITE]':' [HOLD ORIGINAL · DICOM source]'):view.ctLike?' [CT-like display · MRI source · experimental]':useEnh?' ['+s.processing.engine+' · '+(s.processing.frames[st.idx]||'processed')+']':(st.smooth||st.sharp?' [FILTERED SOURCE':' [SOURCE')+(s.processing?.reason?' · '+s.processing.reason:'')+']')+(!st.holdOriginal&&(st.smooth||st.sharp)?' · Smoothening '+st.smooth+' · Sharpening '+st.sharp:'');
 }
 
@@ -1801,7 +1920,7 @@ const drawAll=()=>{for(let i=0;i<N;i++)draw(i);};
 
 function setIdx(i,v,fromSync){
   const s=P.series[i],st=S[i];if(!s||st.holdOriginal)return;v=Math.max(0,Math.min(s.pos.length-1,v));if(v===st.idx&&!fromSync)return;
-  cancelAngle(i);st.idx=v;draw(i);
+  cancelAngle(i);st.idx=v;if(i===hover)refreshReconstructionInspector(i);draw(i);
   if(opt.sync&&!fromSync){
     const source=geom(i),point=source?patientPoint(source,(s.cols-1)/2,(s.rows-1)/2):null;
     let matched=0;
@@ -1895,10 +2014,10 @@ const icons={
  arrow:'<path d="m4 20 16-16M10 4h10v10"/>',
  text:'<path d="M5 5h14M12 5v15M8 20h8"/>',
  reset:'<path d="M4 9a8 8 0 1 1 0 7M4 4v5h5"/>',
- mpr:'<path d="M4 4h16v16H4ZM12 4v16M4 12h16"/>',
+ mpr:'<path d="m3 7 9-5 9 5v10l-9 5-9-5ZM3 7l9 5 9-5M12 12v10"/>',
  minip:'<path d="m3 8 9 5 9-5M3 12l9 5 9-5M3 16l9 5 9-5M12 2v7m-3-3 3 3 3-3"/>',
  average:'<path d="M4 5h16M4 12h16M4 19h16M8 3v18M16 3v18"/>',
- mip:'<path d="m3 8 9-5 9 5-9 5ZM3 12l9 5 9-5M3 16l9 5 9-5"/>',
+ mip:'<path d="M12 2v20M6 5l-3 5 3 4-2 5M18 5l3 5-3 4 2 5M8 8l4 3 4-3M8 17l4-3 4 3"/>',
  stitch:'<path d="M11 2h3l1 2-1 2h-3l-1-2ZM10 7h4l1 2-1 1h-4L9 9ZM9 11h5l1 2-1 1H9l-1-1ZM10 15h5l1 2-1 1h-5l-1-1ZM11 19h4l1 2-3 2-3-2M5 2H3v8h2M19 14h2v8h-2"/><path d="M3 12h4M17 12h4" stroke-dasharray="1 2"/>',
  vr:'<path d="m4 7 8-4 8 4v10l-8 4-8-4ZM4 7l8 4 8-4M12 11v10"/>',
  roi:'<rect x="4" y="4" width="16" height="16" rx="1" stroke-dasharray="3 3"/><path d="M8 12h8M12 8v8"/>'};
@@ -1907,9 +2026,10 @@ const toolDescriptions={pairadc:"Open the matched ADC image in another visible v
 function toolButton(x){
  const button=$('button',{className:'tool-button',title:x.l+' — '+(toolDescriptions[x.t]||'Choose this image operation.'),ariaLabel:x.l});
  button.dataset.tool=x.t;button.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true">'+icons[x.t]+'</svg>';
+ if(['mpr','mip','minip','average','stitch','vr'].includes(x.t))button.append($('span',{textContent:({average:'Average',stitch:'Stitch'}[x.t]||x.l)}));
  return button;
 }
-const toolRail=document.getElementById('tool-rail'),toolG=$('div',{className:'tool-scroll'}),volumeTools=$('div',{className:'tool-pinned'});toolRail.append(toolG,volumeTools);
+const toolRail=document.getElementById('tool-rail'),toolG=$('div',{className:'tool-scroll'}),volumeTools=$('div',{className:'tool-pinned'});toolRail.append(volumeTools);bar.append(toolG);
 const toolStatus=$('span',{id:'tool-status',textContent:'Window / level · drag to adjust'});bar.append(toolStatus);
 const annotationInput=$('input',{id:'annotation-text',type:'text',placeholder:'Annotation text',maxLength:160,ariaLabel:'Annotation text'});annotationInput.hidden=true;bar.append(annotationInput);
 const groups=[['VIEW',[{t:'wl',l:'Window / level'},{t:'pan',l:'Pan'},{t:'zoom',l:'Zoom'},{t:'locate',l:'Locate point'},{t:'pointer3d',l:'3D pointer'}]],['ORIENT',[{t:'rotate',l:'Rotate image'},{t:'flipH',l:'Flip horizontal'},{t:'flipV',l:'Flip vertical'}]],['MEASURE',[{t:'dist',l:'Distance'},{t:'angle',l:'Angle'}]],['ROI',[{t:'roi',l:'Rectangle ROI'},{t:'ellipse',l:'Ellipse ROI'}]],['NOTES',[{t:'arrow',l:'Arrow annotation'},{t:'text',l:'Text annotation'}]]];
@@ -1921,43 +2041,83 @@ groups.forEach(([name,items])=>{
 });
 const fit=toolButton({t:'reset',l:'Fit / reset active viewport'});fit.onclick=()=>resetView(hover);toolG.append(fit);
 volumeTools.append($('div',{className:'rail-category',textContent:'3D'}));
-[{t:'mpr',l:'MPR',mode:'MPR'},{t:'mip',l:'MIP',mode:'MIP'},{t:'minip',l:'MinIP',mode:'MinIP'},{t:'average',l:'Average projection',mode:'Average'},{t:'vr',l:'VR'}].forEach(x=>{const b=toolButton(x);b.disabled=x.t==='vr';if(b.disabled)b.title='VR — volume rendering is not included in the slab reconstruction tools.';else b.onclick=()=>openReconstruction(x.mode);volumeTools.append(b);});
-const reconstructionDialog=$('dialog');reconstructionDialog.style.cssText='color:#d4deea;background:#101923;border:1px solid #2b3b4d;border-radius:14px;width:min(620px,94vw);max-height:90vh;padding:22px';document.body.append(reconstructionDialog);
-function openReconstruction(initialMode='MPR'){
- reconstructionDialog.replaceChildren();const active=P.series[hover],existing=active?.reconstruction;let busy=false;
- const title=$('h3',{textContent:'Multiplanar & slab reconstruction'}),help=$('p',{textContent:'Uses original source pixels and DICOM physical coordinates. Thin MPR interpolates between slices; projection modes sample an adjustable slab. Source slice thickness limits detail.'}),list=$('select',{ariaLabel:'Source volume'});help.style.cssText='font-size:12px;line-height:1.7';
- let eligible=0;catalog.forEach((s,k)=>{if(s.reconstruction||s.derivedComposite)return;let reason='';try{volumeGeometry(s);eligible++;}catch(e){reason=e.message;}list.append($('option',{value:String(k),textContent:s.title+(reason?' — '+reason:''),disabled:!!reason}));});
- const selected=existing?.source??catalog.indexOf(active);if([...list.options].some(o=>!o.disabled&&Number(o.value)===selected))list.value=String(selected);else if(eligible)list.value=[...list.options].find(o=>!o.disabled).value;
- const mode=$('select',{ariaLabel:'Projection mode'});['MPR','MIP','MinIP','Average'].forEach(v=>mode.append($('option',{value:v,textContent:{MPR:'Thin MPR',MIP:'MIP · maximum',MinIP:'MinIP · minimum',Average:'Average · mean'}[v]})));mode.value=initialMode;
- const plane=$('select',{ariaLabel:'Reconstruction plane'});['Axial','Coronal','Sagittal'].forEach(v=>plane.append($('option',{value:v,textContent:v})));plane.value=existing?.plane||'Axial';
- const slab=$('input',{type:'number',min:'.1',max:'200',step:'1',value:String(existing?.slab||10),ariaLabel:'Slab thickness in millimetres'}),spacing=$('input',{type:'number',min:'.2',max:'10',step:'.1',value:String(existing?.spacing||(()=>{try{return Math.max(.2,Math.min(...volumeGeometry(catalog[Number(list.value)]).spacing));}catch(e){return 1;}})()),ariaLabel:'Output spacing in millimetres'});
- const angles=['Pitch','Yaw','Roll'].map((name,k)=>$('input',{type:'number',min:'-180',max:'180',step:'1',value:String(existing?.angles?.[k]||0),ariaLabel:name+' in degrees'}));
- const orthogonal=$('input',{type:'checkbox',checked:!existing&&initialMode==='MPR',ariaLabel:'Open linked three-plane MPR layout'}),update=$('input',{type:'checkbox',checked:!!existing,disabled:!existing,ariaLabel:'Update the active reconstruction'});
- const row=(label,control)=>{const r=$('label',null,[$('span',{textContent:label}),control]);r.style.cssText='display:flex;justify-content:space-between;gap:14px;margin:8px 0';control.style.maxWidth='68%';return r;};
- const status=$('p',{role:'status',ariaLive:'polite'}),apply=$('button',{textContent:'Create reconstruction',disabled:!eligible}),close=$('button',{textContent:'Close'});
- function controls(){slab.disabled=mode.value==='MPR';orthogonal.disabled=mode.value!=='MPR'||angles.some(a=>Number(a.value)!==0);if(orthogonal.disabled)orthogonal.checked=false;update.disabled=!existing||orthogonal.checked;apply.textContent=update.checked&&!update.disabled?'Update reconstruction':'Create reconstruction';}
- list.onchange=()=>{try{const v=volumeGeometry(catalog[Number(list.value)]);spacing.value=String(Math.max(.2,Math.min(...v.spacing)));status.textContent=v.warning||'';}catch(e){status.textContent=e.message;}};
- mode.onchange=orthogonal.onchange=update.onchange=controls;angles.forEach(a=>a.onchange=controls);controls();
- close.onclick=()=>{if(!busy)reconstructionDialog.close();};reconstructionDialog.oncancel=e=>{if(busy)e.preventDefault();};
- apply.onclick=async()=>{if(busy)return;busy=true;apply.disabled=true;close.disabled=true;
- try{
-  const src=Number(list.value),source=catalog[src],target=hover,options={mode:mode.value,plane:plane.value,spacing:Number(spacing.value),slab:Number(slab.value),angles:angles.map(a=>Number(a.value))},three=orthogonal.checked&&!orthogonal.disabled;
-  const updating=update.checked&&!update.disabled,oldIndex=catalog.indexOf(P.series[target]);
-  if(catalog.filter(s=>s.reconstruction).length+(updating?0:three?3:1)>12)throw Error('Twelve reconstruction series are already open. Reload the study to start a new reconstruction workspace.');
-  const v=await buildReconstructionVolume(source,src,f=>{status.textContent='Preparing source volume · '+Math.round(f*100)+'%';});
-  const derived=(three?['Axial','Coronal','Sagittal']:[options.plane]).map(p=>makeReconstructionSeries(source,v,{...options,plane:p}));
-  status.textContent=(v.warning?v.warning+' ':'')+'Reconstructing initial plane…';await decodeCatalogFrame(derived[0],Math.floor(derived[0].pos.length/2),derived[0].hasEnh);if(derived[0].hasEnh)await decodeCatalogFrame(derived[0],Math.floor(derived[0].pos.length/2),false);
-  if(updating){const old=catalog[oldIndex];catalog[oldIndex]=derived[0];const oldCard=rail.querySelectorAll('.series-card')[oldIndex];oldCard?.remove();appendSeriesCard(derived[0],oldIndex);const card=rail.lastElementChild,before=rail.querySelectorAll('.series-card')[oldIndex];if(before&&card!==before)rail.insertBefore(card,before);S.forEach((st,j)=>{if(P.series[j]===old)st.assign(oldIndex);});activate(target);}
-  else{const indices=[];for(const d of derived){indices.push(catalog.length);catalog.push(d);appendSeriesCard(d,catalog.length-1);}if(three){setLayout(2,2);indices.forEach((k,j)=>S[j].assign(k));S[3].assign(src);activate(0);opt.refs=true;const refs=bar.querySelector('input[aria-label="Reference lines"]');if(refs)refs.checked=true;const pointer=toolG.querySelector('[data-tool="pointer3d"]');pointer?.click();pointer3D(0,(P.series[0].cols-1)/2,(P.series[0].rows-1)/2);}else S[target].assign(indices[0]);}
-  filterSeries();reconstructionDialog.close();
- }catch(e){status.textContent=e.message;}finally{busy=false;apply.disabled=!eligible;close.disabled=false;}
+[{t:'mpr',l:'MPR',mode:'MPR'},{t:'mip',l:'MIP',mode:'MIP'},{t:'minip',l:'MinIP',mode:'MinIP'},{t:'average',l:'Average projection',mode:'Average'},{t:'vr',l:'VR'}].forEach(x=>{const b=toolButton(x);b.disabled=x.t==='vr';if(b.disabled)b.title='VR — volume rendering is not included in the slab reconstruction tools.';else b.onclick=()=>openReconstruction(x.mode);(x.t==='vr'?bar:volumeTools).append(b);});
+// Direct active-series reconstruction. No setup dialog and no hidden source substitution.
+let reconRequest=null,reconOperation=0,reconBusy=false,reconEditTimer=null,reconCardTimer=null;
+const reconPanel=document.getElementById('reconstruction-controls');
+function reconstructionMessage(series,message,error=false){
+ if(!reconPanel)return;reconRequest={series,message,error};reconPanel.hidden=false;reconPanel._key=null;
+ reconPanel.replaceChildren($('h3',{textContent:'Reconstruction'}),$('p',{className:error?'recon-error':'recon-status',textContent:message,role:'status',ariaLive:'polite'}));
+}
+function refreshReconstructionInspector(i){
+ if(!reconPanel)return;const s=P.series[i],r=s?.reconstruction;
+ volumeTools.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('on',!!r&&b.dataset.tool===({Average:'average',MinIP:'minip',MIP:'mip',MPR:'mpr'}[r.mode])));
+ if(!r){S[i]?.moreGroup?.querySelectorAll(':scope > .recon-advanced,:scope > .recon-reset').forEach(el=>el.remove());if(reconRequest?.series===s){reconPanel.hidden=false;}else{reconPanel.hidden=true;reconPanel._key=null;}return;}
+ reconPanel.hidden=false;const key='volume-'+catalog.indexOf(s);
+ if(reconPanel._key===key){
+  const pos=reconPanel.querySelector('[aria-label="Plane position"]');if(pos){pos.max=String(s.pos.length-1);if(document.activeElement!==pos)pos.value=String(S[i].idx);pos.nextElementSibling.textContent=(S[i].idx+1)+' / '+s.pos.length;}
+  return;
+ }
+ S[i]?.moreGroup?.querySelectorAll(':scope > .recon-advanced,:scope > .recon-reset').forEach(el=>el.remove());
+ reconPanel._key=key;reconPanel.replaceChildren();
+ const heading=$('h3',{textContent:'Reconstruction'}),source=catalog[r.source],info=$('p',{className:'recon-source',textContent:source.title+' · '+r.volume.cols+' × '+r.volume.rows+' × '+r.volume.depth});
+ const mode=$('select',{ariaLabel:'Projection mode'});['MPR','MIP','MinIP','Average'].forEach(v=>mode.append($('option',{value:v,textContent:v})));mode.value=r.mode;
+ const modeTabs=$('div',{className:'recon-mode-tabs'});['MPR','MIP','MinIP','Average','Stitch'].forEach(name=>{const b=$('button',{textContent:name,className:name===r.mode?'selected':'',ariaLabel:name+' reconstruction'});b.onclick=()=>{if(name==='Stitch'){stitchButton.click();return;}mode.value=name;mode.dispatchEvent(new Event('change'));modeTabs.querySelectorAll('button').forEach(a=>a.classList.toggle('selected',a===b));};modeTabs.append(b);});
+ const plane=$('select',{ariaLabel:'Reconstruction plane'});['Axial','Coronal','Sagittal'].forEach(v=>plane.append($('option',{value:v,textContent:v})));plane.value=r.plane;
+ const row=(name,control,units='')=>{const out=$('output',{textContent:control.value+units}),label=$('label',{className:'recon-field'},[$('span',{textContent:name}),control,out]);control.addEventListener('input',()=>out.textContent=control.value+units);return label;};
+ const slab=$('input',{type:'range',min:'.2',max:'200',step:'.2',value:String(r.slab),ariaLabel:'Slab thickness in millimetres'}),spacing=$('input',{type:'number',min:'.2',max:'10',step:'.1',value:String(r.spacing),ariaLabel:'Output spacing in millimetres'});
+ const position=$('input',{type:'range',min:'0',max:String(s.pos.length-1),step:'1',value:String(S[i].idx),ariaLabel:'Plane position'});
+ const angles=['Pitch','Yaw','Roll'].map((name,k)=>$('input',{type:'range',min:'-180',max:'180',step:'1',value:String(r.angles[k]),ariaLabel:name+' in degrees'}));
+ const status=$('p',{className:'recon-status',role:'status',ariaLive:'polite',textContent:r.volume.warning||''});
+ const changes=preview=>{
+  // Each event resolves the active series afresh; stale controls never edit another viewport.
+  if(reconPanel._key!=='volume-'+catalog.indexOf(P.series[hover]))return;
+  const options={mode:mode.value,plane:plane.value,slab:Number(slab.value),spacing:Number(spacing.value),angles:angles.map(a=>Number(a.value)),preview};
+  slab.disabled=mode.value==='MPR';clearTimeout(reconEditTimer);
+  S[hover].tok++;reconEditTimer=setTimeout(()=>{try{updateLiveReconstruction(hover,options);status.textContent=preview?'Interactive preview · release for full sampling.':(P.series[hover].reconstruction.volume.warning||'');}catch(e){status.textContent=e.message;}},preview?40:0);
  };
- if(eligible&&!existing)list.onchange();
- reconstructionDialog.append(title,help,row('Source stack',list),row('Mode',mode),row('Plane',plane),row('Slab thickness · mm',slab),row('Output pixel spacing · mm',spacing));
- angles.forEach((a,k)=>reconstructionDialog.append(row(['Oblique pitch · °','Oblique yaw · °','Oblique roll · °'][k],a)));
- reconstructionDialog.append(row('Open linked 2×2 layout: three planes + source',orthogonal),row('Update active reconstruction',update),$('p',{textContent:'Original shows the unfiltered thin reformatted plane. Projection ROI values refer to that thin plane, not slab maxima/minima. Crosshairs mark the slab centre. VR remains separate.'}),apply,close,status);
- if(!eligible)status.textContent='No compatible volume is available. Source stacks need at least three consistently spaced slices with complete geometry.';
- reconstructionDialog.showModal();
+ for(const control of [slab,...angles]){control.addEventListener('input',()=>changes(true));control.addEventListener('change',()=>changes(false));control.addEventListener('blur',()=>{if(P.series[hover]?.reconstruction?.preview)changes(false);});}
+ mode.onchange=plane.onchange=spacing.onchange=()=>changes(false);slab.disabled=r.mode==='MPR';
+ position.addEventListener('input',()=>{setIdx(hover,Number(position.value));position.nextElementSibling.textContent=(Number(position.value)+1)+' / '+P.series[hover].pos.length;});
+ const reset=$('button',{textContent:'Reset oblique',className:'recon-reset',title:'Reset oblique angles — return this plane to its anatomical orientation'});reset.onclick=()=>{angles.forEach(a=>{a.value='0';a.nextElementSibling.textContent='0°';});changes(false);};
+ mode.hidden=true;const extra=$('details',{className:'recon-advanced'},[$('summary',{textContent:'Plane & sampling'}),row('Plane',plane),row('Position',position),row('Pixel spacing',spacing,' mm')]);reconPanel.append(modeTabs,mode,info,row('Slab Thickness',slab,' mm'),$('h4',{textContent:'Oblique Angles'}));
+ position.nextElementSibling.textContent=(S[i].idx+1)+' / '+s.pos.length;
+ angles.forEach((a,k)=>reconPanel.append(row(['Pitch','Yaw','Roll'][k],a,'°')));
+ if(S[i].moreGroup)S[i].moreGroup.append(reset,extra);reconPanel.append(status,$('p',{className:'recon-note',textContent:'Original: unfiltered thin reformat. ROI: thin plane, excluding slab projection. Changing geometry starts a new measurement plane.'}));
+}
+function updateReconstructionCard(index){
+ const current=catalog[index],old=rail.querySelectorAll('.series-card')[index];
+ old?.remove();appendSeriesCard(current,index);const card=rail.lastElementChild,before=rail.querySelectorAll('.series-card')[index];if(before&&card!==before)rail.insertBefore(card,before);filterSeries();
+}
+function updateLiveReconstruction(target,options){
+ const old=P.series[target],r=old?.reconstruction;if(!r)return;const index=catalog.indexOf(old),v=r.volume,source=catalog[r.source];
+ const cursor=S[target].matchPoint?.expires===Infinity?S[target].matchPoint.point:null;const centre=cursor||patientPoint(old.geometry[S[target].idx],(old.cols-1)/2,(old.rows-1)/2),next=makeReconstructionSeries(source,v,options);
+ const k=Math.max(0,Math.min(next.pos.length-1,Math.round((rDot(centre,next.reconstruction.normal)-next.reconstruction.minimum[2])/next.reconstruction.spacing)));
+ catalog[index]=next;S.forEach((st,j)=>{if(P.series[j]===old){st.updateReconstruction(next,k);if(cursor)st.matchPoint={point:cursor,idx:k,expires:Infinity};}});
+ const card=rail.querySelectorAll('.series-card')[index];if(card){card.querySelector('.name').textContent=next.title;card.title=next.title+' · drag into a viewport';card.querySelector('.meta').textContent=next.pos.length+' slices\n'+next.spacing.map(v=>v.toFixed(1)).join(' × ')+' mm';}
+ clearTimeout(reconCardTimer);if(!options.preview)reconCardTimer=setTimeout(()=>{if(catalog[index]===next)updateReconstructionCard(index);},300);
+ refreshReconstructionInspector(target);inspectorTitle.textContent=next.title;
+}
+async function openReconstruction(initialMode='MPR'){
+ if(reconBusy)return;const active=P.series[hover],target=hover,existing=active?.reconstruction;
+ if(!active)return;clearTimeout(reconEditTimer);
+ if(existing){try{updateLiveReconstruction(target,{mode:initialMode,plane:existing.plane,slab:existing.slab,spacing:existing.spacing,angles:existing.angles,preview:false});reconPanel._key=null;refreshReconstructionInspector(target);}catch(e){reconstructionMessage(active,e.message,true);}return;}
+ const src=catalog.indexOf(active),op=++reconOperation;reconBusy=true;reconstructionMessage(active,'Checking active series geometry…');
+ try{
+  const geometry=volumeGeometry(active);const v=await buildReconstructionVolume(active,src,f=>{if(P.series[hover]===active)reconstructionMessage(active,'Preparing source volume · '+Math.round(f*100)+'%');});
+  if(op!==reconOperation||P.series[target]!==active||hover!==target)return;
+  const three=initialMode==='MPR',plans=three?[{plane:'Axial',angles:[0,0,0]},{plane:'Coronal',angles:[0,0,0]},{plane:'Sagittal',angles:[0,0,0]},{plane:'Axial',angles:[0,15,0]}]:[{plane:['Axial','Coronal','Sagittal'].includes(active.plane)?active.plane:'Axial',angles:[0,0,0]}];
+  const find=plan=>catalog.findIndex(s=>s.reconstruction?.source===src&&s.reconstruction.plane===plan.plane&&s.reconstruction.oblique===plan.angles.some(a=>a!==0));
+  if(catalog.filter(s=>s.reconstruction).length+plans.filter(plan=>find(plan)<0).length>12)throw Error('The workspace already contains twelve reconstruction planes.');
+  const indices=plans.map(plan=>{let index=find(plan);
+   const d=makeReconstructionSeries(active,v,{mode:initialMode,plane:plan.plane,slab:10,spacing:Math.max(.2,Math.min(...geometry.spacing)),angles:plan.angles,preview:false});
+   if(index<0){index=catalog.length;catalog.push(d);appendSeriesCard(d,index);}else{const old=catalog[index];catalog[index]=d;S.forEach((st,j)=>{if(P.series[j]===old)st.updateReconstruction(d,Math.floor(d.pos.length/2));});updateReconstructionCard(index);}return index;
+  });reconRequest=null;
+  if(three){setLayout(2,2);indices.forEach((k,j)=>S[j].assign(k));activate(0);opt.refs=true;const refs=bar.querySelector('input[aria-label="Reference lines"]');if(refs)refs.checked=true;toolG.querySelector('[data-tool="pointer3d"]')?.click();pointer3D(0,(P.series[0].cols-1)/2,(P.series[0].rows-1)/2);}
+  else{S[target].assign(indices[0]);activate(target);}
+  refreshReconstructionInspector(hover);filterSeries();
+ }catch(e){if(P.series[hover]===active)reconstructionMessage(active,active.title+': '+e.message,true);}
+ finally{reconBusy=false;}
 }
 
 const stitchButton=toolButton({t:'stitch',l:'Stitch'});stitchButton.title='Stitch / Compose overlapping anatomical images';stitchButton.classList.add('stitch-tool');volumeTools.append(stitchButton);
@@ -2025,6 +2185,7 @@ document.addEventListener('pointerdown',e=>{if(!layoutMenu.contains(e.target)&&e
 function setLayout(rows,cols){
  if(expandedViewport!==null){resumeExpandedCine();expandedViewport=null;expandedLayout=null;}
  S.forEach(st=>{if(st.lens)st.lens.hidden=true;st.lensPos=null;});
+ document.querySelectorAll('[data-layout]').forEach(b=>b.classList.toggle('on',b.dataset.layout===rows+','+cols));
  layoutRows=rows;layoutCols=cols;layout.textContent='Layout: '+rows+' × '+cols;
  grid.style.gridTemplateColumns='repeat('+cols+',minmax(0,1fr))';grid.style.gridTemplateRows='repeat('+rows+',minmax(0,1fr))';grid.classList.toggle('dense',rows>=3||cols>=3);
  S.forEach((st,i)=>{st.panel.hidden=i>=rows*cols;if(st.panel.hidden&&st.play){clearInterval(st.play);st.play=null;}});
@@ -2071,6 +2232,7 @@ const rail=document.getElementById('series-rail');
 const inspectorHost=document.getElementById('inspector-controls'),inspectorTitle=document.getElementById('inspector-title'),inspectorEmpty=document.getElementById('inspector-empty');let inspectorOwner=-1;
 function refreshInspector(i){
  if(!inspectorHost||!S[i]?.header)return;
+ refreshReconstructionInspector(i);
  if(inspectorOwner===i&&!window.matchMedia('(max-width:760px)').matches&&P.series[i]){inspectorTitle.textContent=P.series[i].title;inspectorEmpty.hidden=true;return;}
  if(inspectorOwner>=0&&S[inspectorOwner]?.header)S[inspectorOwner].header.append(...Array.from(inspectorHost.children));
  inspectorOwner=-1;
@@ -2109,7 +2271,7 @@ P.series.forEach((item,i)=>{
   const bCT=$('button',{textContent:'CT-like',title:'Experimental MRI display: inverted contrast and bounded sharpening. Also emphasizes other low-signal tissues.'});
   const bOriginal=$('button',{textContent:'Original',title:'Press and hold: original DICOM window, no viewer processing. Release to restore.'});
   st.originalButton=bOriginal;bOriginal.setAttribute('aria-pressed','false');
-  const startOriginal=()=>{if(!P.series[i]||st.holdOriginal)return;activate(i);st.holdOriginal=true;bOriginal.className='on';bOriginal.setAttribute('aria-pressed','true');draw(i);};
+  const startOriginal=()=>{if(!P.series[i]||st.holdOriginal)return;activate(i);st.holdOriginal=true;bOriginal.classList.add('on');bOriginal.setAttribute('aria-pressed','true');draw(i);};
   bOriginal.onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();bOriginal.setPointerCapture(e.pointerId);startOriginal();};
   bOriginal.onpointerup=bOriginal.onpointercancel=bOriginal.onlostpointercapture=()=>endOriginal(i);
   bOriginal.onkeydown=e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();e.stopPropagation();if(!e.repeat)startOriginal();}};
@@ -2121,7 +2283,7 @@ P.series.forEach((item,i)=>{
   angleInput.oninput=()=>{const angle=Number(angleInput.value);if(Number.isFinite(angle)){st.rotation=((angle%360)+360)%360;draw(i);}};
   orientationMenu.append(angleInput);
   [['Rotate left','↶',()=>st.rotation=((st.rotation||0)+270)%360],['Rotate right','↷',()=>st.rotation=((st.rotation||0)+90)%360],['Flip horizontal','↔',()=>st.flipH=!st.flipH],['Flip vertical','↕',()=>st.flipV=!st.flipV],['Reset orientation','⟲',()=>{st.rotation=0;st.flipH=st.flipV=false;}]].forEach(([name,symbol,action])=>{const b=$('button',{textContent:symbol,title:name+' — change display orientation only',ariaLabel:name});b.onclick=()=>{action();st.syncDisplayUI();draw(i);};orientationMenu.append(b);});
-  const bRecon=toolButton({t:'mpr',l:'Reconstruction settings'});bRecon.disabled=!s.reconstruction;bRecon.onclick=()=>openReconstruction(s.reconstruction?.mode||'MPR');
+  const bRecon=toolButton({t:'mpr',l:'Reconstruction settings'});bRecon.disabled=!!s.derivedComposite;bRecon.onclick=()=>openReconstruction(s.reconstruction?.mode||'MPR');
   const bPair=toolButton({t:'pairadc',l:'Open paired ADC'});
   bPair.disabled=s.diffusionPair?.adc==null;
   bPair.onclick=()=>{const pair=s.diffusionPair;if(pair?.adc==null)return;const target=S.findIndex((v,j)=>j!==i&&!v.panel.hidden&&!P.series[j]);const j=target>=0?target:S.findIndex((v,j)=>j!==i&&!v.panel.hidden);if(j<0){readingNotice.textContent='Choose a layout with at least two visible viewports for paired ADC review.';return;}S[j].assign(pair.adc);S[j].idx=pair.frames[st.idx];draw(j);activate(i);};
@@ -2143,20 +2305,44 @@ P.series.forEach((item,i)=>{
   [['Contrast','ctContrast',.7,1.8,.05],['Edge emphasis','ctSharp',0,.5,.05]].forEach(([label,key,min,max,step])=>{const slider=$('input',{type:'range',min,max,step,value:st[key],ariaLabel:label});slider.oninput=()=>{st[key]=Number(slider.value);draw(i);};settings.append($('label',null,[document.createTextNode(label),slider]));});
   settings.style.cssText='font-size:10px;color:#91bdd4';
   st.togEnh=()=>bEnh.onclick();st.togInv=()=>bInv.onclick();st.togPlay=()=>bPlay.onclick();
-  pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh&&!s.reconstruction&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,orientationMenu,bRecon,bPair,bCandidates,filters.smooth,filters.sharp,bRst,bPlay,settings]),cv,stat);
+  pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:(s.geometry?.some(Boolean)?s.plane:s.title)+(s.hasEnh&&!s.reconstruction&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,orientationMenu,bRecon,bPair,bCandidates,filters.smooth,filters.sharp,bRst,bPlay,settings]),cv,stat);
+  const displayGroup=$('section',{className:'reference-display'}),wlControls=$('div',{className:'reference-window'});
+  wlControls.append($('h4',{textContent:'Window / Level'}));
+  const wlInputs=[];
+  for(const [name,label] of [['width','W'],['level','L']]){
+    const value=$('input',{type:'number',step:'1',ariaLabel:'Window '+name}),range=$('input',{type:'range',ariaLabel:'Window '+name+' slider',step:'any'});
+    const apply=raw=>{const n=Number(raw);if(!Number.isFinite(n)||name==='width'&&n<=0)return;const width=name==='width'?n:st.hi-st.lo,level=name==='level'?n:(st.hi+st.lo)/2;st.lo=level-width/2;st.hi=level+width/2;st.wl='manual';draw(i);};
+    value.onchange=()=>apply(value.value);range.oninput=()=>apply(range.value);wlInputs.push({name,value,range});wlControls.append($('label',{className:'reference-wl-row'},[$('span',{textContent:label}),value,range]));
+  }
+  bOriginal.dataset.referenceText='true';bOriginal.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9a7 7 0 1 1-1 6M5 4v5h5"/></svg><span>Original (hold)</span>';bOriginal.classList.add('reference-original');
+  const refreshSegments=[];displayGroup.append(wlControls,bOriginal);
+  for(const [name,select] of [['Smoothening',filters.smooth],['Sharpening',filters.sharp]]){
+    select.hidden=true;const block=$('div',{className:'reference-filter'}),segments=$('div',{className:'filter-segments'});
+    block.append($('h4',{textContent:name}),select,segments);
+    const buttons=[];for(let n=1;n<=5;n++){const button=$('button',{textContent:n===0?'Off':String(n),title:name+' — level '+n+'. Click the active level again to turn off.',ariaLabel:name+' level '+n});button.onclick=()=>{select.value=String(Number(select.value)===n?0:n);select.dispatchEvent(new Event('change'));};buttons.push(button);segments.append(button);}
+    refreshSegments.push(()=>buttons.forEach((button,n)=>{const on=Number(select.value)===n+1;button.classList.toggle('selected',on);button.setAttribute('aria-pressed',String(on));}));displayGroup.append(block);
+  }
+  st.refreshReferenceDisplay=()=>{for(const {name,value,range} of wlInputs){const n=name==='width'?st.hi-st.lo:(st.hi+st.lo)/2,span=Math.max(1,s.wl.full[1]-s.wl.full[0]);if(document.activeElement!==value)value.value=String(Math.round(n));range.min=String(name==='width'?.01:Math.min(s.wl.full[0],n));range.max=String(name==='width'?Math.max(span*2,n):Math.max(s.wl.full[1],n));if(document.activeElement!==range)range.value=String(n);}refreshSegments.forEach(f=>f());};
+  const moreGroup=$('details',{className:'reference-more-tools'},[$('summary',{textContent:'More image tools'})]);
+  moreGroup.firstChild.dataset.referenceText='true';const head=pnl.querySelector('.hd');for(const node of Array.from(head.children))if(!node.classList.contains('ttl'))moreGroup.append(node);head.append(displayGroup,moreGroup);st.moreGroup=moreGroup;st.refreshReferenceDisplay();
   grid.append(pnl);st.header=pnl.querySelector(".hd");
   const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
   st.clear=()=>{endOriginal(i,false);st.filterCache=null;stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover){updateActiveSummary();refreshInspector(i);}};
   st.displayConfig=()=>({rotation:st.rotation,flipH:st.flipH,flipV:st.flipV,smooth:st.smooth,sharp:st.sharp,wl:sel.value,inv:st.inv,enh:st.enh,ctLike:st.ctLike,ctContrast:st.ctContrast,ctSharp:st.ctSharp});
   st.applyDisplay=c=>{st.rotation=Number.isFinite(c.rotation)?c.rotation:0;st.flipH=!!c.flipH;st.flipV=!!c.flipV;st.smooth=filterLevel(c.smooth);st.sharp=filterLevel(c.sharp);filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);sel.value=['balanced','auto','dicom','full','angio','dwi','vessels'].includes(c.wl)&&s.wl[c.wl]?c.wl:'auto';preset(i,sel.value);st.inv=!!c.inv;st.enh=!!c.enh&&s.hasEnh;bInv.className=st.inv?'on':'';bEnh.className=st.enh?'on':'';if(c.ctLike&&s.modality==='MR'){st.ctContrast=Math.max(.7,Math.min(1.8,Number(c.ctContrast)||1.25));st.ctSharp=Math.max(0,Math.min(.5,Number(c.ctSharp)||0));settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;bCT.onclick();}st.syncDisplayUI();draw(i);};
-  st.syncDisplayUI=()=>{bRecon.disabled=!s.reconstruction;bRecon.title='Reconstruction settings — change plane, oblique angles, slab thickness or projection mode.';bPair.disabled=s.diffusionPair?.adc==null;bPair.title='Open paired ADC — '+(s.diffusionPair?.status||'This image has no automatic ADC pair.');bCandidates.disabled=s.restrictedCandidates?.status!=='processed';bCandidates.title='Restricted-diffusion candidates — '+(s.restrictedCandidates?.reason||'Enable the research option in Diffusion review; original matched high-b DWI and ADC with explicit units are required.');bCandidates.classList.toggle('on',!!st.candidateOverlay);angleInput.value=String(Math.round(st.rotation||0));bOriginal.title=s.reconstruction?'Original — hold to show the unfiltered thin reconstruction. The uploaded source stack remains available separately.':s.derivedComposite?'Original — hold to view the unbalanced source composite, still resampled and blended.':'Original — hold to bypass processing at the source DICOM window. Release to restore.';sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
+  st.syncDisplayUI=()=>{bRecon.disabled=!!s.derivedComposite;bRecon.title='Reconstruction settings — change plane, oblique angles, slab thickness or projection mode.';bPair.disabled=s.diffusionPair?.adc==null;bPair.title='Open paired ADC — '+(s.diffusionPair?.status||'This image has no automatic ADC pair.');bCandidates.disabled=s.restrictedCandidates?.status!=='processed';bCandidates.title='Restricted-diffusion candidates — '+(s.restrictedCandidates?.reason||'Enable the research option in Diffusion review; original matched high-b DWI and ADC with explicit units are required.');bCandidates.classList.toggle('on',!!st.candidateOverlay);angleInput.value=String(Math.round(st.rotation||0));bOriginal.title=s.reconstruction?'Original — hold to show the unfiltered thin reconstruction. The uploaded source stack remains available separately.':s.derivedComposite?'Original — hold to view the unbalanced source composite, still resampled and blended.':'Original — hold to bypass processing at the source DICOM window. Release to restore.';sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
+  st.updateReconstruction=(next,idx)=>{
+    endOriginal(i,false);stopMagnifier(i);cancelAngle(i);st.tok++;s=next;P.series[i]=next;
+    Object.assign(st,{idx,cache:new Map(),filterCache:null,meas:{},lay:null,matchPoint:null,enh:next.hasEnh});
+    pnl.querySelector('.ttl').textContent=next.reconstruction.oblique?'Oblique':next.reconstruction.plane;pnl.querySelector('.ttl').title=next.title;bEnh.style.display=next.hasEnh?'':'none';st.syncDisplayUI();draw(i);
+  };
   st.assign=(index)=>{
     if(P.series[i]===catalog[index]){activate(i);return;}
     endOriginal(i,false);stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
     st.tok++;s=catalog[index];P.series[i]=s;
     Object.assign(st,{idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null,matchPoint:null,ctLike:false,ctRestore:null,candidateOverlay:s.restrictedCandidates?.status==='processed',rotation:0,flipH:false,flipV:false,smooth:0,sharp:0,holdOriginal:false,filterCache:null});
     const restored=restoredState(index);if(restored)Object.assign(st,restored);
-    pnl.querySelector('.ttl').textContent=s.title+(s.hasEnh&&!s.reconstruction&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'');
+    pnl.querySelector('.ttl').title=s.title;pnl.querySelector('.ttl').textContent=(s.geometry?.some(Boolean)?s.plane:s.title)+(s.hasEnh&&!s.reconstruction&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'');
     sel.replaceChildren();['balanced','auto','dicom','full','angio','dwi','vessels'].forEach(n=>{if(s.wl[n])sel.append($('option',{value:n,textContent:({balanced:'Balanced display',angio:'Angiography',dwi:'DWI · infarct review',vessels:'Vessels'}[n]||'W/L '+n)}));});
     bEnh.title='Enhancement — toggle the prepared image processing. '+(s.processing?.engine||'');bCT.disabled=s.modality!=='MR';bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;st.syncDisplayUI();activate(i);draw(i);
   };
@@ -2224,7 +2410,8 @@ P.series.forEach((item,i)=>{
 
 function appendSeriesCard(s,index){
  const thumb=$('canvas'),card=$('button',{className:'series-card'+(index===0?' active':''),title:s.title+' · drag into a viewport',ariaLabel:'Load '+s.title,draggable:true});
- card.append(thumb,$('span',{className:'name',textContent:s.title}),$('span',{className:'meta',textContent:s.plane+' · '+s.pos.length+' images'}));
+ document.getElementById('series-count').textContent='('+catalog.length+')';
+ card.append(thumb,$('span',{className:'name',textContent:s.title}),$('span',{className:'meta',textContent:s.pos.length+' slices\n'+s.spacing.map(v=>Number(v).toFixed(1)).join(' × ')+' mm'}));
  card.ondragstart=e=>{e.dataTransfer.setData('application/x-dicom-series',String(index));e.dataTransfer.effectAllowed='copy';};
  card.onclick=()=>S[hover].assign(index);rail.append(card);
  // Decode thumbnail independently from viewport assignment.
@@ -2272,11 +2459,12 @@ function actionInfo(name){const n=name.toLowerCase();
 }
 function makeToolbarIcons(){
  document.querySelectorAll('#bar button,#bar summary,.hd button,.hd summary').forEach(el=>{
-  if(el.querySelector('svg'))return;const text=el.textContent.trim();if(!text)return;
+  if(el.querySelector('svg')||el.dataset.referenceText||el.closest('.reference-filter'))return;const text=el.textContent.trim();if(!text)return;
   const original=el.getAttribute('aria-label')||text,info=actionInfo(original),extra=el.title;
   el.setAttribute('aria-label',info[1]);el.title=info[1]+' — '+info[2]+(extra?' '+extra:'');el.classList.add('icon-action');el.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true">'+actionPaths[info[0]]+'</svg>';
  });
  document.querySelectorAll('#bar select,.hd select').forEach(el=>{
+  if(el.closest('.reference-filter'))return;
   if(el.parentElement.classList.contains('icon-select')){el._updateIconTitle?.();return;}
   const smooth=el.getAttribute('aria-label')==='Smoothening',sharp=el.getAttribute('aria-label')==='Sharpening',wl=el.getAttribute('aria-label')==='Window presets',name=smooth?'Smoothening':sharp?'Sharpening':wl?'Window presets':el.getAttribute('aria-label')||'Choose option';
   const wrap=$('span',{className:'icon-select'});wrap.innerHTML='<span class="icon-action" aria-hidden="true"><svg viewBox="0 0 24 24">'+actionPaths[smooth?'smooth':sharp?'sharp':'window']+'</svg></span>';
@@ -2294,7 +2482,7 @@ drawAll();
 """
 
 
-VIEWER_HTML = VIEWER_HTML.replace("__INSPECTOR__", INSPECTOR_HTML)
+VIEWER_HTML = VIEWER_HTML.replace("__INSPECTOR__", INSPECTOR_HTML).replace("__WORKSTATION_HEADER__", WORKSTATION_HEADER_HTML)
 
 def build_empty_workspace():
     theme = VIEWER_HTML.split("</style>")[0] + "</style>"
@@ -2319,7 +2507,11 @@ def build_empty_workspace():
 
     fit_script = '<script>' + VIEWER_HTML.split('<script>')[1].split('const P=')[0] + '</script>'
     tools=tools.replace('<div class="brand-tag">IMAGE TOOLS</div>', '<button data-open-workflow title="Open study — upload a DICOM ZIP or change study and processing settings" aria-label="Open study"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6h7l2 3h9v11H3ZM3 9V4h7l2 2h8v3"/></svg></button>' )
-    return theme + '<div class="workspace">' + tool_rail + rail + '<section class="viewer-stage">' + tools + '<div id="grid">' + cells + '</div></section>' + INSPECTOR_HTML + '</div><div class="workspace-footer"><span>No image data loaded</span><span>Measurements · Linked review · Original comparison</span></div>' + fit_script
+    header=WORKSTATION_HEADER_HTML.replace('Study workspace','No study loaded').replace('MRI · Image review','Open a DICOM ZIP to begin').replace('<div id="bar"><div class="brand-tag">IMAGE TOOLS</div></div>',tools)
+    header=re.sub(r'<button data-layout=', '<button disabled data-layout=',header)
+    tool_rail=re.sub(r'<div class="tool-scroll">.*?</div>', '',tool_rail)
+    tool_rail=re.sub(r'(<button[^>]+aria-label="([^"]+)"[^>]*>.*?</svg>)(</button>)',lambda m:m[1]+'<span>'+escape(m[2].replace(' projection','').replace(' / Compose',''))+'</span>'+m[3],tool_rail)
+    return theme + header + '<div class="workspace">' + tool_rail + rail + '<section class="viewer-stage"><div id="grid">' + cells + '</div></section>' + INSPECTOR_HTML + '</div><div class="workspace-footer"><span>No image data loaded</span><span>Measurements · Linked review · Original comparison</span></div>' + fit_script
 
 
 def build_viewer_html(series_payloads, patient_text=None, panel_height=360, study_key=None):
@@ -2390,6 +2582,18 @@ html,body,[data-testid="stAppViewContainer"]{background:radial-gradient(ellipse 
 [data-testid="stFileUploaderDropzone"]{background:#1a2e40;border:1px dashed #4d7691;border-radius:14px}
 [data-testid="stFileUploaderDropzone"] button{border-radius:9px;background:#274b64;border-color:#4c7895;color:#d8f1fd}
 @media(max-width:760px){[data-testid="stMainBlockContainer"]{padding:2rem .45rem .3rem!important}.main-header{height:52px}.header-meta{font-size:10px}.header-tab{margin-left:0}.wordmark{font-size:21px}.study-strip{padding:10px 12px;gap:12px}}
+[data-testid="stMainBlockContainer"]{padding:.5rem .5rem 0!important} [data-testid="stMain"]>[data-testid="stVerticalBlock"]{gap:0!important}
+[data-testid="stElementContainer"]:has(.main-header),[data-testid="stElementContainer"]:has(.study-strip){display:none!important}
+.main-header,.study-strip{display:none!important}
+
+[data-testid="stSidebar"][aria-expanded="false"]{width:0!important;min-width:0!important;max-width:0!important;border:0!important;box-shadow:none!important}
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"]{gap:0!important}
+[data-testid="stHeader"],[data-testid="stToolbar"]{display:none!important}
+
+[data-testid="stSidebar"]{position:fixed!important;top:0;bottom:0;z-index:1000;width:300px!important}
+[data-testid="stMain"]{margin-left:0!important;width:100%!important}
+[data-testid="stSidebar"][data-collapsed="true"]{display:none!important;min-width:0!important;max-width:0!important;width:0!important;border:0!important;box-shadow:none!important;visibility:hidden}
+
 </style>
 """
 
@@ -2456,7 +2660,7 @@ def _cache_resource(fn):
     return st.cache_resource(show_spinner=False, max_entries=1, ttl=600)(fn) if st else fn
 
 @_cache_resource
-def load_index(file_hash, _zbytes, grouping_version="spatial-reconstruction-v3"):
+def load_index(file_hash, _zbytes, grouping_version="spatial-reconstruction-v4"):
     # Diffusion index v1: split DWI/ADC and known b-values before preparing images.
     # Cached work must never render UI or call callbacks that render UI.
     named, skipped = read_zip(_zbytes)
