@@ -693,6 +693,134 @@ def adaptive_series_reason(s):
     return None
 
 
+
+def station_signature(s):
+    """Strict acquisition gate: missing timing or ambiguous derived data are unsupported."""
+    ds=s["items"][0]
+    if adaptive_series_reason(s):
+        return None
+    timing=[_first(getattr(ds,key,None)) for key in ("EchoTime","RepetitionTime")]
+    if any(v is None or not np.isfinite(v) or v<=0 for v in timing):
+        return None
+    types=" ".join(str(v).upper() for v in getattr(ds,"ImageType",[]))
+    desc=str(getattr(ds,"SeriesDescription","")).upper()
+    if any(t in types+" "+desc for t in ("DERIVED","LOCALIZER","SCOUT","SCANO")):
+        return None
+    # Suppression variants must not be mixed even if TR/TE happen to agree.
+    suppression="STIR" if "STIR" in desc else "FS" if re.search(r"FAT|SPAIR|SPIR|(?:^|[^A-Z])FS(?:$|[^A-Z])|T[12]FS|PDFS",desc) else "NONE"
+    ti=_first(getattr(ds,"InversionTime",None),0) or 0
+    return dict(te=timing[0],tr=timing[1],ti=ti,suppression=suppression,
+                sequence=str(getattr(ds,"ScanningSequence","")),
+                component=("WATER" if "WATER" in desc else "FAT" if "FAT ONLY" in desc else "OTHER"),
+                contrast=bool(re.search(r"POST|GAD|C[+]",desc)),
+                agent=str(getattr(ds,"ContrastBolusAgent","")))
+
+
+def station_compatible(a,b):
+    if not a or not b:return False
+    if any(a[k]!=b[k] for k in ("suppression","sequence","component","contrast","agent")):return False
+    return all(abs(a[k]-b[k])<=max(1,frac*min(a[k],b[k]))
+               for k,frac in (("te",.1),("tr",.2),("ti",.1)))
+
+
+def station_pair_ratio(a,b):
+    """Estimate target/reference gain using coplanar DICOM physical overlap only.
+
+    No deformation or anatomical synthesis. Disagreement rejects a pair rather
+    than manufacturing correspondence. Source (o) frames verify alignment; active display frames determine gain.
+    """
+    if a.get("streamed") or b.get("streamed") or not station_compatible(a.get("stationSignature"),b.get("stationSignature")):
+        return None,"incompatible or unsupported acquisition"
+    ratios=[];supports=[]
+    indices=np.unique(np.linspace(0,len(a["items"])-1,min(5,len(a["items"]))).astype(int))
+    used=set()
+    for i in indices:
+        ga=a["geometry"][i]
+        if not ga:continue
+        candidates=[]
+        for j,gb in enumerate(b["geometry"]):
+            if not gb or gb["ref"]!=ga["ref"] or gb["study"]!=ga["study"]:continue
+            if abs(np.dot(ga["normal"],gb["normal"]))<.9999:continue
+            distance=abs(np.dot(np.subtract(gb["origin"],ga["origin"]),ga["normal"]))
+            if distance<=.75:candidates.append((distance,j))
+        if not candidates:continue
+        _,j=min(candidates)
+        if j in used:continue
+        gb=b["geometry"][j]
+        ya,xa=np.mgrid[2:a["rows"]-2:3,2:a["cols"]-2:3]
+        points=(np.asarray(ga["origin"])+xa[...,None]*np.asarray(ga["row"])*ga["spacing"][1]
+                +ya[...,None]*np.asarray(ga["col"])*ga["spacing"][0])
+        delta=points-np.asarray(gb["origin"])
+        xb=delta@np.asarray(gb["row"])/gb["spacing"][1]
+        yb=delta@np.asarray(gb["col"])/gb["spacing"][0]
+        inside=(xb>=2)&(xb<b["cols"]-3)&(yb>=2)&(yb<b["rows"]-3)
+        if inside.sum()<100:continue
+        fa=unpack_frame(a["items"][i]["o"],a["rows"],a["cols"],a["off"],a["scale"])
+        fb=unpack_frame(b["items"][j]["o"],b["rows"],b["cols"],b["off"],b["scale"])
+        if min(fa.min(),fb.min())<0:continue
+        va=fa[ya,xa];vb=ndi.map_coordinates(fb,[yb,xb],order=1,mode="nearest")
+        tissue=inside&(va>.1*np.percentile(fa,99))&(vb>.1*np.percentile(fb,99))
+        if tissue.sum()<100:continue
+        x=va[tissue];y=vb[tissue]
+        if min(np.std(x)/np.mean(x),np.std(y)/np.mean(y))<.08:continue
+        if np.corrcoef(x,y)[0,1]<.97:continue
+        # Verify correspondence on source pixels, then match the active processed copies.
+        if "e" in a["items"][i]:
+            fa=unpack_frame(a["items"][i]["e"],a["rows"],a["cols"],a["off"],a["scale"])
+            x=fa[ya,xa][tissue]
+        if "e" in b["items"][j]:
+            fb=unpack_frame(b["items"][j]["e"],b["rows"],b["cols"],b["off"],b["scale"])
+            y=ndi.map_coordinates(fb,[yb,xb],order=1,mode="nearest")[tissue]
+        if np.any(x<=0) or np.any(y<=0):continue
+        logs=np.log(x/y); center=float(np.median(logs))
+        if np.median(np.abs(logs-center))>.10:continue
+        ratios.append(center);supports.append(int(tissue.sum()));used.add(j)
+    if len(ratios)<2:return None,"need at least two aligned overlapping slices with matching anatomy"
+    center=float(np.median(ratios))
+    if max(abs(np.asarray(ratios)-center))>.12:return None,"overlap ratios disagree across slices"
+    if not np.log(2/3)<=center<=np.log(1.5):return None,"required gain exceeds conservative limits"
+    return float(np.exp(center)),f"{len(ratios)} overlapping slices, {sum(supports)} tissue samples"
+
+
+def match_station_payloads(payloads,selected,reference):
+    """Modify display copies only; reference is fixed, disconnected stations skipped."""
+    import copy
+    out=copy.deepcopy(payloads);logs=[];gains={reference:1.0};edges={}
+    for n,i in enumerate(selected):
+        for j in selected[n+1:]:
+            ratio,reason=station_pair_ratio(payloads[i],payloads[j])
+            if ratio is not None:edges[i,j]=ratio
+            else:logs.append(f"{i+1} ↔ {j+1}: skipped — {reason}")
+    # Propagate only connected, cycle-consistent gains; never clip a required correction.
+    for _ in selected:
+        for (i,j),ratio in edges.items():
+            if i in gains and j not in gains:gains[j]=gains[i]*ratio
+            elif j in gains and i not in gains:gains[i]=gains[j]/ratio
+    if any(abs(np.log(gains[j]/gains[i]/r))>.10 for (i,j),r in edges.items() if i in gains and j in gains):
+        return payloads,["No matching applied: overlapping stations have inconsistent gain estimates."]
+    if any(not 2/3<=v<=1.5 for v in gains.values()):
+        return payloads,["No matching applied: cumulative correction exceeds conservative limits."]
+    windows=copy.deepcopy(payloads[reference]["wl"])
+    for i in selected:
+        if i not in gains:
+            logs.append(f"Station {i+1}: unchanged — no reliable overlap path to reference")
+            continue
+        if len(gains)<2:continue
+        p=out[i];gain=gains[i]
+        originals=[unpack_frame(it["o"],p["rows"],p["cols"],p["off"],p["scale"]) for it in p["items"]]
+        display=[unpack_frame(it.get("e",it["o"]),p["rows"],p["cols"],p["off"],p["scale"])*gain for it in p["items"]]
+        p.update(pack_series(originals,display));p["hasEnh"]=True;p["wl"]=copy.deepcopy(windows)
+        p["presentation"]=dict(default="auto",field=None,base=0)
+        p["processing"]=dict(p["processing"],engine=p["processing"]["engine"]+" + Station Match",
+                              applied=len(display),frames=["station matched"]*len(display))
+        # Original must restore this station's own source window, not the shared reference.
+        p["stationOriginalWL"]=payloads[i]["wl"]
+        p["stationMatch"]=dict(gain=round(gain,5),reference=reference+1)
+        p["memoryId"] += "|station:"+str(reference)+":"+str(round(gain,5))
+        logs.append(f"Station {i+1}: display gain {gain:.3f}×; reference station {reference+1}")
+    return out,logs
+
+
 def build_payload_series(s, enhance, params, progress=None, force_stream=False, enhance_requested=None):
     streamed = force_stream or cine_series(s) or payload_estimate(s, enhance) > 24*1024*1024
     if payload_estimate(s, False) > 2*1024*1024*1024:
@@ -795,7 +923,7 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
     orientations = {tuple(np.round(_floats(getattr(d, "ImageOrientationPatient", None) or [], 6) or [], 4)) for d in s["items"]}
     balanced_default = not quantitative and not cine_series(s)
     field = info.get("field") if balanced_default and len(orientations) == 1 and () not in orientations and params.get("shading", 0) == 0 else None
-    return dict(title=s["label"], modality=str(getattr(a, "Modality", "")).upper(), plane=plane_name(s["normal"]), rows=s["rows"], cols=s["cols"],
+    return dict(stationSignature=station_signature(s), title=s["label"], modality=str(getattr(a, "Modality", "")).upper(), plane=plane_name(s["normal"]), rows=s["rows"], cols=s["cols"],
                 spacing=[float(sp[0]), float(sp[1])], memoryId=hashlib.sha256(f"{s['uid']}|{s['desc']}|{s['rows']}|{s['cols']}".encode()).hexdigest(), spacingKnown=bool(_floats(getattr(a, "PixelSpacing", None) or [], 2)), thickness=_first(getattr(a, "SliceThickness", None)), geometry=geometry, sequence=str(getattr(a, "SeriesDescription", "") or getattr(a, "ProtocolName", "") or ""),
                 invert=str(getattr(a, "PhotometricInterpretation", "")).upper() == "MONOCHROME1",
                 pos=pos, hasEnh=bool(enh), processing=processing, streamed=streamed, snr=round(info["snr"], 1), sigma=info["sigma"],
@@ -1088,7 +1216,7 @@ function filterPixels(src,w,h,smooth,sharp,range,noise){
   }out=result;
  }return out;
 }
-function originalPresentation(s,st){const wl=s.wl.dicom?'dicom':'auto',bounds=s.wl[wl];return {...st,wl,lo:bounds[0],hi:bounds[1],inv:!!s.invert,ctLike:false};}
+function originalPresentation(s,st){s=s.stationOriginalWL?{...s,wl:s.stationOriginalWL}:s;const wl=s.wl.dicom?'dicom':'auto',bounds=s.wl[wl];return {...st,wl,lo:bounds[0],hi:bounds[1],inv:!!s.invert,ctLike:false};}
 function endOriginal(i,redraw=true){const st=S[i];if(!st.holdOriginal)return;st.holdOriginal=false;st.originalButton.className='';st.originalButton.setAttribute('aria-pressed','false');if(redraw&&P.series[i])draw(i);}
 window.addEventListener('pointerup',()=>S.forEach((st,i)=>endOriginal(i)));
 window.addEventListener('pointercancel',()=>S.forEach((st,i)=>endOriginal(i)));
@@ -1822,6 +1950,22 @@ def main():
     if params.get("algorithm") == "adaptive":
         applied = sum(p.get("processing", {}).get("applied", 0) for p in payloads)
         sb.caption(f"Adaptive MRI: {applied} of {sum(len(p['items']) for p in payloads)} loaded images processed. Check each viewport status for originals or skipped images.")
+    with sb.expander("Spine station matching", expanded=False):
+        st.caption("Experimental display matching for separate sagittal stations of the same sequence. Select stations, then a reference. Uses DICOM physical overlap; does not stitch images or correct patient motion.")
+        eligible=[i for i,p in enumerate(payloads) if p["plane"]=="Sagittal" and p.get("stationSignature") and not p.get("streamed")]
+        match_selected=st.multiselect("Stations to match",eligible,format_func=lambda i:payloads[i]["title"],key="station_selection_"+fhash)
+        if len(match_selected)>=2:
+            reference=st.selectbox("Reference station",match_selected,format_func=lambda i:payloads[i]["title"],key="station_reference_"+fhash)
+            enabled=st.checkbox("Match spine stations",value=False,key="station_enabled_"+fhash)
+            if enabled:
+                payloads,match_log=match_station_payloads(payloads,match_selected,reference)
+                for message in match_log:st.caption(message)
+                if sum(len(json.dumps(p,separators=(",",":"))) for p in payloads)>WORKSPACE_PAYLOAD_BUDGET:
+                    st.error("Station matching exceeds the viewer budget. Disable matching or load fewer series.")
+                    return
+                st.caption("Matched stations share the reference Auto window. Enhance toggles the matched display; hold Original restores each station's own source window. ROI values remain original.")
+        elif len(eligible)<2:
+            st.caption("Load at least two sagittal magnitude-MR series with standard geometry and acquisition timing metadata.")
     # Patient Demographics Banner Customization
     patient = None
     if show_ids:
