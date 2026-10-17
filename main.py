@@ -31,7 +31,7 @@ try:
 except ImportError:
     st = None
 
-APP_BUILD = "2026.10.17-spatial-live.9"
+APP_BUILD = "2026.10.17-reference-A.10"
 MAX_PANELS = 6
 WORKSPACE_PAYLOAD_BUDGET = 96 * 1024 * 1024
 
@@ -1202,7 +1202,7 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
 # ----------------------------------------------------------------------------------------------------------------
 #  Diagnostic Interface Engine (Dark-Mode Workspace Layer)
 # ----------------------------------------------------------------------------------------------------------------
-WORKSTATION_HEADER_HTML = r"""<header id="workstation-header"><button class="workstation-brand" data-open-workflow title="SD-DCM — open study and processing settings"><svg viewBox="0 0 36 36" aria-hidden="true"><path d="M18 6c-7-6-17 3-12 10-6 7 2 15 9 11 4 7 14 3 12-5 8-4 4-15-3-15-1-3-4-4-6-1ZM18 6v23M8 12l19 10M8 23l16-12"/></svg><span>SD-DCM</span></button><button id="header-study" data-open-workflow title="Open study settings">Study workspace <span>⌄</span></button><div id="header-study-meta">MRI · Image review</div><div class="header-layouts"><button data-layout="2,2" title="2 × 2 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM12 3v18M3 12h18"/></svg><span>2x2</span></button><button data-layout="1,1" title="1 × 1 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3Z"/></svg><span>1x1</span></button><button data-layout="3,3" title="3 × 3 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM9 3v18M15 3v18M3 9h18M3 15h18"/></svg><span>3x3</span></button></div><details id="workspace-more"><summary aria-label="All viewer tools" title="All viewer tools — measurements, orientation, linking, layout and annotations">•••</summary><div id="bar"><div class="brand-tag">IMAGE TOOLS</div></div></details></header>"""
+WORKSTATION_HEADER_HTML = r"""<header id="workstation-header" data-viewer-build="2026.10.17-reference-A.10"><button class="workstation-brand" data-open-workflow title="SD-DCM · Build A10 — open study and processing settings"><svg viewBox="0 0 36 36" aria-hidden="true"><path d="M18 6c-7-6-17 3-12 10-6 7 2 15 9 11 4 7 14 3 12-5 8-4 4-15-3-15-1-3-4-4-6-1ZM18 6v23M8 12l19 10M8 23l16-12"/></svg><span>SD-DCM</span></button><button id="header-study" data-open-workflow title="Open study settings">Study <span>⌄</span></button><div id="header-study-meta">MRI · Image review</div><div class="header-layouts"><button id="header-layout-picker" title="Viewport layout — choose one to four rows and columns" aria-label="Choose custom viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM12 3v18M3 12h18"/></svg></button><button data-layout="2,2" title="2 × 2 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM12 3v18M3 12h18"/></svg><span>2x2</span></button><button data-layout="1,1" title="1 × 1 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3Z"/></svg><span>1x1</span></button><button data-layout="3,3" title="3 × 3 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM9 3v18M15 3v18M3 9h18M3 15h18"/></svg><span>3x3</span></button></div><details id="workspace-more"><summary aria-label="All viewer tools" title="All viewer tools — measurements, orientation, linking, layout and annotations">•••</summary><div id="bar"><div class="brand-tag">IMAGE TOOLS</div></div></details></header>"""
 INSPECTOR_HTML = r"""<aside id="inspector" aria-label="Active viewport settings"><div class="inspector-heading">Reconstruction <span>⌃</span></div><div id="inspector-title">No active series</div><section id="reconstruction-controls" hidden aria-label="Live reconstruction controls"></section><div id="inspector-controls" class="hd inspector-actions"></div><div id="inspector-empty" class="inspector-empty">Open a study to begin.<br>Select any viewport to access its display and review controls.</div><div class="inspector-help">Hover over an icon for its name and function.<br>Hold the eye icon to compare with Original.<br>Double-click an image to expand or restore its layout.</div><button class="inspector-settings" data-open-workflow title="Study &amp; processing settings — open upload, enhancement, Signal Balance, station matching and diffusion review" aria-label="Study and processing settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 3v8M16 13v8"/></svg></button></aside>"""
 
 VIEWER_HTML = r"""
@@ -1284,85 +1284,19 @@ body{font-size:13px}
 .hd button,#bar button{min-width:29px;min-height:29px;padding:5px}
 .hd summary,#bar summary{list-style:none;cursor:pointer}.hd summary::-webkit-details-marker,#bar summary::-webkit-details-marker{display:none}
 #tool-status,.rail-category{display:none}
-/* Reference workstation appearance. Image processing and image-space geometry are unchanged. */
-:root{--surface:#17212e;--edge:#344655;--accent:#64c5ec;--muted:#95a7b9}
-body{padding:12px 0 0;background:radial-gradient(ellipse at 6% 0%,#192e3d 0,transparent 45%),#0b111c;color:#dce5ee;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
-.workspace{grid-template-columns:56px 224px minmax(0,1fr) 254px;gap:16px;padding:0;border:0;background:transparent}
-#tool-rail{grid-column:1;grid-row:1;background:transparent;border:0;padding:14px 3px 8px;gap:7px}
-.tool-scroll{gap:7px}.tool-pinned{background:transparent;border-color:#293b4a;padding-top:12px;gap:7px}
-#tool-rail .tool-button{width:43px;height:38px;border-radius:11px;color:#9eb1c3}
-#tool-rail .tool-button:hover{background:#1e3446;color:#dff5ff;border-color:#38556b}
-#tool-rail .tool-button.on{background:linear-gradient(135deg,#213f55,#193044);border-color:#38617b;color:#68cefa;box-shadow:inset 0 1px #ffffff08}
-#series-rail{grid-column:2;grid-row:1;padding:20px 12px;background:linear-gradient(155deg,#1d2b37,#151d2a 60%);border:1px solid #3d5261;border-radius:19px;box-shadow:inset 0 1px #ffffff05,0 12px 24px #0002}
-.rail-heading{font-size:11px;font-weight:600;color:#c5d7e6;letter-spacing:1.5px;padding:0 4px 14px;border-bottom:1px solid #34424f;margin-bottom:15px}
-.series-card{display:grid;grid-template-columns:58px minmax(0,1fr);grid-template-rows:1fr 1fr;column-gap:11px;align-items:center;min-height:79px;padding:9px 7px;margin:0 0 8px;background:transparent;border:1px solid transparent;border-radius:10px;box-shadow:none}
-.series-card canvas{grid-row:1/3;width:58px;height:58px;object-fit:contain;background:#080e17;border-radius:7px;border:1px solid #344451}
-.series-card .name{grid-column:2;align-self:end;margin:0;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-size:12px;line-height:1.35;color:#e0e8f0}
-.series-card .meta{grid-column:2;align-self:start;font-size:11px;color:#8fa6bb;margin-top:5px}
-.series-card:hover{background:#203342;border-color:#385366}.series-card.active{border-color:#5384a1;background:linear-gradient(90deg,#244357,#1c2e3e);box-shadow:inset 3px 0 #64c5ec}
-.viewer-stage{grid-column:3;grid-row:1;display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;border:1px solid #405364;border-radius:19px;background:#0a101a;box-shadow:0 12px 26px #0003}
-#bar{border:0;border-bottom:1px solid #344555;border-radius:0;background:linear-gradient(110deg,#21303e,#192331);padding:11px 13px;gap:9px;max-height:120px;min-height:55px}
-.brand-tag{display:none}#bar label{padding:5px;color:#a4bacd}
-#bar button,.icon-select{background:#202d3c;border:1px solid #344352;border-radius:9px;box-shadow:inset 0 1px #ffffff04}
-#bar button:hover,.icon-select:hover{background:#2a4053;border-color:#5683a0}#bar button.on{background:#23485e;color:#83d6f7}
-#grid{flex:1;gap:8px;padding:8px;background:#0b121d;min-width:0}
-.panel{border:1px solid #2c3b4c;border-radius:11px;background:#03060b}.panel.active-viewport{border-color:#588ba6;box-shadow:0 0 0 1px #5aa6c41a}
-.panel .hd{padding:8px 11px;background:#15202d;min-height:34px;border-color:#283c4c;flex-shrink:0}
 .panel .hd>*:not(.ttl){display:none}
-.panel .ttl{margin:0;font-size:12px;line-height:1.4;color:#bacbdb}
-.panel canvas{background:#03060b}
-.st{background:#101a27;border-color:#2b3d4e;color:#99adc1;font-size:11px;padding:6px 10px;min-height:33px}
-#grid.dense .hd{min-height:24px;padding:4px 6px}.dense .st{font-size:9px}.dense .ttl{font-size:10px}
-#inspector{grid-column:4;grid-row:1;min-height:0;overflow:auto;border:1px solid #405363;border-radius:19px;background:linear-gradient(145deg,#1c2a37,#151f2c 70%);padding:18px 16px;box-shadow:inset 0 1px #ffffff05}
-.inspector-heading{font-size:13px;font-weight:500;color:#7fd5f4;padding-bottom:16px;border-bottom:1px solid #364755;letter-spacing:.2px}
-.inspector-heading::after{content:'';display:block;width:30px;height:2px;background:#65c8ed;position:relative;top:17px}
-.inspector-kicker{margin-top:22px;font-size:10px;letter-spacing:1.2px;color:#819bb1}
-#inspector-title{font-size:13px;line-height:1.6;color:#d9e4ee;margin:9px 0 18px;overflow-wrap:anywhere}
-#inspector .inspector-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;background:none;border:0;padding:0}
-#inspector .inspector-actions>button,#inspector .inspector-actions>.icon-select{width:100%;height:46px;border:1px solid #334658;border-radius:10px;background:linear-gradient(145deg,#233344,#1b2837);margin:0}
-#inspector button:hover{border-color:#588ca7;background:#284256}
-#inspector button.on{background:#234e68;border-color:#5c9dbe;color:#9be2ff}
-#inspector .inspector-actions>details{grid-column:1/-1;border:1px solid #34495b;border-radius:10px;background:#1b2938;padding:8px}
-#inspector details summary{display:flex;justify-content:center;min-height:28px}#inspector details[open]{display:flex;flex-wrap:wrap;gap:7px}#inspector details[open] summary{width:100%}
-#inspector input{background:#132231;color:#dbe7f0;border:1px solid #40566b;border-radius:5px;padding:5px}
-#inspector .inspector-actions .icon-select{display:flex}.inspector-empty{color:#8ea6bb;line-height:1.8;font-size:12px;padding:15px 0}
-.inspector-help{font-size:11px;line-height:1.8;color:#91a9bf;border-top:1px solid #344555;margin-top:22px;padding-top:16px}
-.inspector-settings{width:100%;height:40px;margin-top:14px;border-radius:10px;color:#a8d6ec;background:#203548;border:1px solid #3b5a70;display:flex;justify-content:center;align-items:center}
-.inspector-settings svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.6}
-.workspace-footer{margin:13px 0 0 72px;padding:10px 15px;min-height:35px;border:1px solid #344858;border-radius:11px;background:linear-gradient(100deg,#1a2734,#16212e);color:#9aafc3;font-size:11px}
-.empty-canvas{background:radial-gradient(ellipse at center,#152536,#060d17 70%)}.drop-hint{background:#0b1421;color:#9ab0c4}
-::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:#3a5163;border-radius:5px}
-dialog{background:#142231!important;color:#dce7ef!important;border-color:#46667e!important;border-radius:18px!important;box-shadow:0 24px 80px #0009}dialog::backdrop{background:#030914b8;backdrop-filter:blur(4px)}
-@media(max-width:1300px){.workspace{grid-template-columns:48px 185px minmax(0,1fr) 218px;gap:10px}#inspector{padding:15px 12px}.series-card{grid-template-columns:47px minmax(0,1fr);gap:7px}.series-card canvas{width:47px;height:53px}#series-rail{padding:18px 8px}.workspace-footer{margin-left:58px}}
-@media(max-width:1000px){.workspace{grid-template-columns:46px 146px minmax(0,1fr) 180px;gap:8px}#inspector .inspector-actions{grid-template-columns:repeat(3,minmax(0,1fr))}.series-card{grid-template-columns:38px minmax(0,1fr)}.series-card canvas{width:38px;height:46px}.series-card .name{font-size:11px}#inspector{padding:13px 9px}.inspector-help{font-size:10px}#bar{gap:6px;padding:8px}}
-@media(max-width:760px){.workspace{grid-template-columns:42px 110px minmax(0,1fr);gap:6px}#inspector{display:none}#series-rail{display:block;padding:14px 5px;border-radius:12px}.series-card{display:block;padding:5px}.series-card canvas{width:100%;height:52px}.series-card .name{margin-top:5px}.panel .hd>*:not(.ttl){display:initial}.workspace-footer{margin-left:0;font-size:10px}.viewer-stage{border-radius:12px}#bar{max-height:100px}.inspector-actions{display:none!important}}
-
-@media(max-width:760px){.panel .hd>.icon-select,.panel .hd>button{display:inline-flex}.panel .hd>details{display:block}}
-/* Midnight Cyan: glass belongs to chrome; image canvases remain neutral and opaque. */
-body{background:radial-gradient(ellipse at 8% 2%,#123248 0,transparent 48%),radial-gradient(ellipse at 97% 100%,#142b42 0,transparent 45%),#080f1b}
-.workspace{gap:12px;grid-template-columns:52px 208px minmax(0,1fr) 270px}
-#series-rail,#inspector{background:linear-gradient(145deg,#20364bc9,#101f32e8);border:1px solid #668eac47;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-radius:12px;box-shadow:inset 0 1px #d9f5ff0d,0 12px 35px #0003}
-.viewer-stage{border-radius:12px;border-color:#547a9659;box-shadow:0 12px 35px #0005}
-#bar{background:linear-gradient(100deg,#1c3549eb,#17283be8);border-bottom-color:#6995b53b}
-#grid{gap:5px;padding:5px;background:#080e18}.panel{border-radius:6px}.panel canvas{background:#000}
-.panel .hd{background:linear-gradient(100deg,#142638,#102031);border-color:#40627c4d}
-.panel.active-viewport{border-color:#60c7e6;box-shadow:0 0 0 1px #5bc4e529}
-#tool-rail .tool-button{border-radius:9px}.series-card.active{border-color:#65c9ea6b;background:linear-gradient(90deg,#23506999,#17354b99)}
-#inspector .inspector-actions>button,#inspector .inspector-actions>.icon-select{height:39px;border-radius:8px;background:linear-gradient(140deg,#28415890,#1a2f4380);border-color:#6688a13d}
-#reconstruction-controls{border-bottom:1px solid #769db23b;margin-bottom:16px;padding-bottom:12px}
-#reconstruction-controls h3{font-size:13px;font-weight:600;letter-spacing:.3px;color:#87def5;margin:0 0 9px}
-.recon-source{font-size:11px;color:#9cb4c8;line-height:1.6;overflow-wrap:anywhere;margin:0 0 12px}
 #inspector .recon-field{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px;padding:5px 0;cursor:default;font-size:12px;color:#c5d9e7}
-.recon-field>span{grid-column:1}.recon-field>output{grid-column:2;grid-row:1;font:11px ui-monospace,monospace;color:#85cfe8}
+.recon-field>span{grid-column:1;align-self:center}.recon-field>output{grid-column:2;grid-row:1;font:12px Arial,sans-serif;color:#d7e7f7}
 #inspector .recon-field>input,#inspector .recon-field>select{grid-column:1/-1;grid-row:2;width:100%;min-width:0;max-width:100%;margin:0}
-#inspector .recon-field>input[type=range]{padding:0;border:0;background:transparent;height:16px;accent-color:#65cce9;cursor:ew-resize}
-.recon-field select{background:#12283b;border-color:#50728b66;border-radius:6px;padding:6px}
-.recon-status,.recon-error,.recon-note{font-size:11px;line-height:1.6;margin:10px 0 0;color:#91c9dc}.recon-error{color:#f1bc9b;overflow-wrap:anywhere}.recon-note{color:#8ba4b8;font-size:10px}
-.recon-reset{width:100%;margin-top:8px;font-size:11px;background:#17374c;border-color:#4d879c66;border-radius:6px}
-@media(max-width:1300px){.workspace{grid-template-columns:46px 170px minmax(0,1fr) 240px;gap:9px}}
-@media(max-width:1000px){.workspace{grid-template-columns:42px 130px minmax(0,1fr) 210px;gap:6px}}
-@media(max-width:760px){.workspace{grid-template-columns:38px 95px minmax(0,1fr);gap:5px}#inspector:has(#reconstruction-controls:not([hidden])){display:block;position:fixed;right:8px;top:65px;bottom:45px;width:240px;z-index:30;background:#142638f5}.inspector-heading{padding-bottom:10px}.workspace-footer{margin-left:0}}
-
+#inspector .recon-field>input[type=range]{padding:0;border:0;background:transparent;height:18px;cursor:ew-resize}
+.recon-source{display:none}.recon-status,.recon-error{font-size:11px;line-height:1.6;color:#91c9dc}.recon-error{color:#f1bc9b;overflow-wrap:anywhere}.recon-note{display:none}
+#inspector .reference-more-tools{order:4;width:100%;display:block!important;background:transparent!important;border:0!important;padding:8px 0!important;color:#88afc9}
+#inspector .reference-more-tools>summary{display:block!important;text-align:left;font-size:11px;min-height:16px;padding:4px 0;list-style:none}
+#inspector .reference-more-tools:not([open])>:not(summary){display:none!important}
+#inspector .reference-more-tools[open]{display:flex!important;flex-wrap:wrap;gap:6px}#inspector .reference-more-tools[open]>summary{width:100%}
+#inspector .reference-more-tools[open]>button{width:34px;height:32px;font-size:11px}
+#inspector .reference-more-tools[open]>.recon-advanced{width:100%;order:-1}#inspector .reference-more-tools[open]>.recon-reset{width:auto;order:-1}
+.reference-display .icon-select{display:none!important}.recon-status:empty{display:none}
 /* Approved A reference, measured against the 1536 × 1024 concept. */
 body{padding:0;background:#030b12;color:#d7e7f7;font-family:Arial,'Segoe UI',sans-serif;font-size:13px;gap:9px}
 #workstation-header{display:flex;align-items:center;height:51px;min-height:51px;flex-shrink:0;border:1px solid #233b4e;border-radius:12px;background:linear-gradient(110deg,#0d1b2a,#06111c 75%);position:relative;z-index:40}
@@ -1402,38 +1336,63 @@ body{padding:0;background:#030b12;color:#d7e7f7;font-family:Arial,'Segoe UI',san
 @media(max-width:1300px){.workspace{grid-template-columns:60px 198px minmax(0,1fr) 270px;gap:8px}.series-card{grid-template-columns:73px minmax(0,1fr)}.series-card canvas{width:73px;height:88px}.series-card{min-height:100px}.header-layouts{margin-right:5px}#header-study-meta{padding:0 10px}.workstation-brand{width:158px}}
 @media(max-width:1050px){.workspace{grid-template-columns:52px 155px minmax(0,1fr) 232px;gap:6px}.series-card{grid-template-columns:53px minmax(0,1fr)}.series-card canvas{width:53px;height:73px}.series-card{min-height:86px}.series-card .name,.series-card .meta{font-size:11px}#tool-rail .tool-button{height:65px}#inspector{padding:13px 10px}#header-study-meta{display:none}.workstation-brand{width:150px}.recon-mode-tabs button{font-size:10px}}
 @media(max-width:760px){.workspace{grid-template-columns:45px 108px minmax(0,1fr);gap:5px}#tool-rail .tool-button{height:62px}#tool-rail .tool-button span{font-size:9px}.series-card{display:block;min-height:0;padding:5px}.series-card canvas{width:100%;height:65px}.header-layouts span{display:none}.header-layouts button{padding:6px}.header-layouts{margin-left:auto}.workstation-brand{width:auto;padding:5px 9px}.workstation-brand span{display:none}#header-study{font-size:12px;padding:6px 9px}.reference-display{width:100%}#inspector:has(#reconstruction-controls:not([hidden])){top:60px;bottom:6px}#inspector .reference-display{display:block}.panel .hd>.reference-display{display:none}}
-
-
-#inspector .reference-more-tools{order:4;width:100%;display:block!important;background:transparent!important;border:0!important;padding:8px 0!important;color:#88afc9}
-#inspector .reference-more-tools>summary{display:block!important;text-align:left;font-size:11px;min-height:20px;padding:4px 0}
-#inspector .reference-more-tools:not([open])>:not(summary){display:none!important}
-#inspector .reference-more-tools[open]{display:flex!important;flex-wrap:wrap;gap:6px}
-#inspector .reference-more-tools[open]>summary{width:100%}
-#inspector .reference-more-tools[open]>button{width:34px;height:32px;font-size:11px}
-#inspector .reference-more-tools[open]>.recon-advanced{width:100%;order:-1}
-#inspector .reference-more-tools[open]>.recon-reset{width:auto;order:-1}
-#inspector .inspector-actions{border:0;margin:0;padding:0}.recon-status:empty{display:none}
-#inspector .reference-display{padding-top:0}.reference-window{border-top:1px solid #253d50;margin-top:20px;padding-top:20px}
-#reconstruction-controls .recon-field{gap:13px;padding:6px 0 12px}#reconstruction-controls>h4{margin-top:12px;padding-top:19px}
-.st:not(.render-error){position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);padding:0}.st.render-error{display:block;background:#311c14;color:#ffd4bd;opacity:1;font-size:12px;z-index:5}
+.viewer-stage{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.series-card .name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;overflow:hidden}
+/* Reference A dimensions: 1536×1024, coordinates measured in CSS pixels. */
+:root{--a-bg:#030b12;--a-panel:#081522;--a-edge:#243d50;--a-text:#dfedfc;--a-accent:#59c6f1}
+body{padding:8px 8px 18px;gap:9px;background:var(--a-bg);font:13px Arial,'Segoe UI',sans-serif;color:var(--a-text)}
+#workstation-header{height:51px;min-height:51px;border-radius:12px;background:linear-gradient(110deg,#0d1b2a,#06111c 75%)}
+.workstation-brand{width:173px;white-space:nowrap;gap:14px;font-size:17px;letter-spacing:.4px}
+#header-study{font-size:16px;padding-left:19px;padding-right:19px;width:153px;flex-shrink:0;text-align:left}#header-study-meta{font-size:12px}
+.header-layouts{margin-right:100px;gap:5px}.header-layouts button{border-color:#162b3c;padding:7px 10px}.header-layouts button.on{border-color:#285f7d;color:#64d6fb}
+.workspace{grid-template-columns:73px 243px minmax(0,1fr) 304px;grid-template-rows:minmax(0,1fr);gap:0;border:0;padding:0;background:transparent}
+#tool-rail{margin-right:5px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}#series-rail{margin-right:10px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}.viewer-stage{margin-right:10px}
+#grid{gap:7px}.panel.active-viewport{border-color:var(--a-edge)}.panel .hd{height:36px;min-height:36px;padding:10px 18px;background:#000}.panel .ttl{font-size:14px;line-height:17px;color:#b9daf4;flex:0 1 auto;cursor:pointer;outline-offset:4px}.panel .ttl::after{content:'⌄';font-size:13px;margin-left:9px;color:#bddbef}
+#series-rail{background:linear-gradient(105deg,#0b1b29,#08131e)}.rail-heading{height:44px;font-size:15px;padding:11px 13px}
+.series-card{min-height:112px;grid-template-columns:90px minmax(0,1fr);column-gap:9px;padding:5px 4px}.series-card canvas{width:90px;height:100px}.series-card .name{font-size:13px;line-height:1.5}.series-card .meta{white-space:pre-line;font-size:12px;line-height:1.65}
+#tool-rail .tool-button{height:81px;gap:8px}#tool-rail .tool-button span{font-size:12px}.tool-pinned{gap:0}
+#inspector{min-height:0;overflow:auto;padding:15px 15px 12px;background:linear-gradient(105deg,#0b1b29,#07131f);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.inspector-heading{font-size:16px;line-height:19px;padding-bottom:17px}.inspector-heading span{font-size:19px}
+#inspector .inspector-actions{border:0;margin:0;padding:0;gap:0}
+#reconstruction-controls{position:relative;height:468px;margin:0;padding:0;border:0}
+#reconstruction-controls.recon-message{height:auto;min-height:0;padding-bottom:12px}
+#reconstruction-controls.recon-message>h3{display:block;font-size:13px;color:#8bd8f6}
+.recon-mode-tabs{height:45px;position:absolute;top:0;left:0;right:0;margin:0;display:flex;border-radius:5px;border:1px solid #264458}
+.recon-mode-tabs button{padding:0 5px;height:43px;font-size:12px;color:#c4d9ee;line-height:16px;background:linear-gradient(145deg,#112638,#101f2e)}
+.recon-mode-tabs button.selected{background:linear-gradient(110deg,#16415d,#1a344a);box-shadow:inset 0 0 0 1px #53bce8}
+#reconstruction-controls>.recon-field{position:absolute;left:0;right:0;margin:0;padding:0;gap:0;grid-template-rows:32px 18px 20px;font-size:14px;line-height:18px}
+#reconstruction-controls>.recon-field>output{font:12px Arial,sans-serif;padding:6px 9px;border-radius:5px;border:1px solid #2d4355;background:#0a1724;color:#dfedfc;min-width:63px;line-height:18px}
+#reconstruction-controls>.recon-field>input[type=range]{height:18px;padding:0;margin:0}
+#reconstruction-controls>.recon-slab-field{top:70px;row-gap:10px}
+#reconstruction-controls>h4{position:absolute;left:0;right:0;top:173px;margin:0;padding-top:17px;height:38px;border-top:1px solid #253d50;font-size:14px;font-weight:400;line-height:18px}
+#reconstruction-controls>.recon-angle-field[data-axis=Axial]{top:221px}#reconstruction-controls>.recon-angle-field[data-axis=Coronal]{top:301px}#reconstruction-controls>.recon-angle-field[data-axis=Sagittal]{top:381px}
+.range-limits{display:flex;justify-content:space-between;grid-column:1/-1;grid-row:3;font-size:12px;color:#aac6dd;line-height:18px;padding:3px 2px 0}
 #inspector input[type=range]{appearance:none;-webkit-appearance:none;background:transparent!important;height:18px;outline:none}
 #inspector input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:3px;background:#3b5066}
 #inspector input[type=range]::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:16px;height:16px;margin-top:-6px;border:1px solid #89e0ff;border-radius:50%;background:#50c3ed;box-shadow:0 0 6px #53c4ef18}
-#inspector input[type=range]:disabled::-webkit-slider-thumb{background:#49687c;border-color:#7193a7}
-#inspector .recon-field>input[type=range]{margin:0 0 4px}
-
-
+#inspector .reference-display{padding:0;background:none;border:0;order:0;flex:none;width:100%}
+.reference-window{border-top:1px solid #253d50;margin:0;padding:19px 0 0}
+#inspector .reference-window>h4{font-size:14px;font-weight:400;line-height:18px;margin:0 0 14px;color:#e0edfb}
+.reference-wl-row{display:grid;grid-template-columns:22px 56px minmax(0,1fr);gap:14px;align-items:center;padding:0;margin:0 0 16px;min-height:32px;font-size:13px}
+#inspector .reference-wl-row input{font:13px Arial,sans-serif;width:100%;min-width:0;height:32px;background:#0a1724;border:1px solid #2d4355;border-radius:5px;padding:6px;text-align:center;color:#dcecff}
+#inspector .reference-wl-row input[type=range]{height:18px;padding:0!important;border:0!important}
+#inspector .reference-original{margin:12px 0 13px;height:45px;min-height:45px;padding:10px;border-radius:6px;border:1px solid #2d465a;background:linear-gradient(110deg,#182e40,#142334);font-size:13px;color:#e0edfc;gap:10px}
 #inspector .reference-original svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.2}
-#inspector .recon-field>output{padding:5px 10px}.reference-filter{padding-bottom:7px}.reference-window{padding-bottom:12px}.reference-more-tools>summary{min-height:16px!important}
+.reference-filter{border-top:1px solid #294050;padding:16px 0 2px}.reference-filter h4{font-size:14px;line-height:18px;margin:0 0 12px!important}
+.filter-segments{height:40px;border:1px solid #263f52;border-radius:6px}.filter-segments button{height:38px;padding:0;font-size:13px;background:linear-gradient(145deg,#112638,#101f2e)}
+.st:not(.render-error){position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);padding:0}.st.render-error{display:block;background:#311c14;color:#ffd4bd;opacity:1;font-size:12px;z-index:5}
+#inspector .reference-more-tools{margin-top:8px}
 #tool-rail .tool-button:focus-visible{outline-offset:-3px}
+@media(max-width:1300px){.workspace{grid-template-columns:65px 208px minmax(0,1fr) 270px;gap:0}.header-layouts{margin-right:35px}.workstation-brand{width:158px}.series-card{grid-template-columns:73px minmax(0,1fr)}.series-card canvas{width:73px;height:88px}.series-card{min-height:100px}}
+@media(max-width:1050px){.workspace{grid-template-columns:57px 165px minmax(0,1fr) 232px;gap:0}.header-layouts{margin-right:0}#inspector{padding:13px 10px}.series-card{grid-template-columns:53px minmax(0,1fr)}.series-card canvas{width:53px;height:73px}.series-card{min-height:86px}#tool-rail .tool-button{height:65px}.series-card .name,.series-card .meta{font-size:11px}}
+@media(max-width:760px){body{padding:6px 5px}.workspace{grid-template-columns:50px 118px minmax(0,1fr);gap:0}.series-card{display:block}.series-card canvas{width:100%;height:65px}.workstation-brand{width:auto}#inspector:has(#reconstruction-controls:not([hidden])){top:64px;bottom:6px;width:260px}.panel .hd>.reference-display{display:none}}
 
-.workstation-brand{white-space:nowrap}.series-card .meta{white-space:pre-line}
 </style>
 
 __WORKSTATION_HEADER__<div class="workspace"><nav id="tool-rail" aria-label="Image tools"></nav><nav id="series-rail" aria-label="Loaded series"><div class="rail-heading">Series <span id="series-count"></span><button data-open-workflow title="Series loading and study settings" aria-label="Series settings">☷</button></div></nav><section class="viewer-stage" aria-label="Image workspace"><div id="grid"></div></section>__INSPECTOR__</div><div class="workspace-footer"><span>Scroll to browse · Ctrl / Cmd + scroll to zoom · Middle drag to pan</span><span>Double-click to expand · Hold Original to compare</span></div>
 
 <script>
-function fitHost(){try{const host=window.frameElement;if(host){host.style.height=Math.max(300,window.parent.innerHeight-host.getBoundingClientRect().top-12)+'px';}}catch(e){}}
+function fitHost(){try{const host=window.frameElement;if(host){host.style.height=Math.max(300,window.parent.innerHeight-host.getBoundingClientRect().top)+'px';}}catch(e){}}
 fitHost();try{window.parent.addEventListener('resize',fitHost);}catch(e){}
 function openStudySettings(){try{const doc=window.parent.document,side=doc.querySelector('[data-testid="stSidebar"]'),rect=side?.getBoundingClientRect();if(rect&&rect.right>40&&rect.left<window.parent.innerWidth&&getComputedStyle(side).display!=='none')return;
  const button=doc.querySelector('button[data-testid="stExpandSidebarButton"],[data-testid="stExpandSidebarButton"] button,[data-testid="stSidebarCollapsedControl"] button,[data-testid="collapsedControl"] button');if(button){button.click();return;}
@@ -1441,6 +1400,7 @@ function openStudySettings(){try{const doc=window.parent.document,side=doc.query
  }catch(e){}const info=document.getElementById('inspector-title');if(info)info.textContent='Use the sidebar arrow at the top to open study settings.';}
 document.querySelectorAll('[data-open-workflow]').forEach(b=>b.addEventListener('click',openStudySettings));
 const P=__PAYLOAD__;
+document.documentElement.dataset.viewerBuild=P.viewerBuild;document.title='SD-DCM · A10';
 const catalog=P.series;
 P.series=Array.from({length:16},(_,i)=>i<Math.min(4,catalog.length)?catalog[i]:null);
 const PH=__PANEL_H__, N=16;
@@ -2015,8 +1975,8 @@ const icons={
  text:'<path d="M5 5h14M12 5v15M8 20h8"/>',
  reset:'<path d="M4 9a8 8 0 1 1 0 7M4 4v5h5"/>',
  mpr:'<path d="m3 7 9-5 9 5v10l-9 5-9-5ZM3 7l9 5 9-5M12 12v10"/>',
- minip:'<path d="m3 8 9 5 9-5M3 12l9 5 9-5M3 16l9 5 9-5M12 2v7m-3-3 3 3 3-3"/>',
- average:'<path d="M4 5h16M4 12h16M4 19h16M8 3v18M16 3v18"/>',
+ minip:'<circle cx="12" cy="12" r="8"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4M4 4l3 3M17 17l3 3M4 20l3-3M17 7l3-3"/>',
+ average:'<path d="M3 2h7v9H3ZM14 2h7v9h-7ZM3 14h7v8H3ZM14 14h7v8h-7ZM6 5h12v14H6Z"/>',
  mip:'<path d="M12 2v20M6 5l-3 5 3 4-2 5M18 5l3 5-3 4 2 5M8 8l4 3 4-3M8 17l4-3 4 3"/>',
  stitch:'<path d="M11 2h3l1 2-1 2h-3l-1-2ZM10 7h4l1 2-1 1h-4L9 9ZM9 11h5l1 2-1 1H9l-1-1ZM10 15h5l1 2-1 1h-5l-1-1ZM11 19h4l1 2-3 2-3-2M5 2H3v8h2M19 14h2v8h-2"/><path d="M3 12h4M17 12h4" stroke-dasharray="1 2"/>',
  vr:'<path d="m4 7 8-4 8 4v10l-8 4-8-4ZM4 7l8 4 8-4M12 11v10"/>',
@@ -2047,13 +2007,13 @@ let reconRequest=null,reconOperation=0,reconBusy=false,reconEditTimer=null,recon
 const reconPanel=document.getElementById('reconstruction-controls');
 function reconstructionMessage(series,message,error=false){
  if(!reconPanel)return;reconRequest={series,message,error};reconPanel.hidden=false;reconPanel._key=null;
- reconPanel.replaceChildren($('h3',{textContent:'Reconstruction'}),$('p',{className:error?'recon-error':'recon-status',textContent:message,role:'status',ariaLive:'polite'}));
+ reconPanel.classList.add('recon-message');reconPanel.replaceChildren($('h3',{textContent:'Reconstruction'}),$('p',{className:error?'recon-error':'recon-status',textContent:message,role:'status',ariaLive:'polite'}));
 }
 function refreshReconstructionInspector(i){
  if(!reconPanel)return;const s=P.series[i],r=s?.reconstruction;
  volumeTools.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('on',!!r&&b.dataset.tool===({Average:'average',MinIP:'minip',MIP:'mip',MPR:'mpr'}[r.mode])));
  if(!r){S[i]?.moreGroup?.querySelectorAll(':scope > .recon-advanced,:scope > .recon-reset').forEach(el=>el.remove());if(reconRequest?.series===s){reconPanel.hidden=false;}else{reconPanel.hidden=true;reconPanel._key=null;}return;}
- reconPanel.hidden=false;const key='volume-'+catalog.indexOf(s);
+ reconPanel.hidden=false;reconPanel.classList.remove('recon-message');const key='volume-'+catalog.indexOf(s);
  if(reconPanel._key===key){
   const pos=reconPanel.querySelector('[aria-label="Plane position"]');if(pos){pos.max=String(s.pos.length-1);if(document.activeElement!==pos)pos.value=String(S[i].idx);pos.nextElementSibling.textContent=(S[i].idx+1)+' / '+s.pos.length;}
   return;
@@ -2064,10 +2024,16 @@ function refreshReconstructionInspector(i){
  const mode=$('select',{ariaLabel:'Projection mode'});['MPR','MIP','MinIP','Average'].forEach(v=>mode.append($('option',{value:v,textContent:v})));mode.value=r.mode;
  const modeTabs=$('div',{className:'recon-mode-tabs'});['MPR','MIP','MinIP','Average','Stitch'].forEach(name=>{const b=$('button',{textContent:name,className:name===r.mode?'selected':'',ariaLabel:name+' reconstruction'});b.onclick=()=>{if(name==='Stitch'){stitchButton.click();return;}mode.value=name;mode.dispatchEvent(new Event('change'));modeTabs.querySelectorAll('button').forEach(a=>a.classList.toggle('selected',a===b));};modeTabs.append(b);});
  const plane=$('select',{ariaLabel:'Reconstruction plane'});['Axial','Coronal','Sagittal'].forEach(v=>plane.append($('option',{value:v,textContent:v})));plane.value=r.plane;
- const row=(name,control,units='')=>{const out=$('output',{textContent:control.value+units}),label=$('label',{className:'recon-field'},[$('span',{textContent:name}),control,out]);control.addEventListener('input',()=>out.textContent=control.value+units);return label;};
- const slab=$('input',{type:'range',min:'.2',max:'200',step:'.2',value:String(r.slab),ariaLabel:'Slab thickness in millimetres'}),spacing=$('input',{type:'number',min:'.2',max:'10',step:'.1',value:String(r.spacing),ariaLabel:'Output spacing in millimetres'});
+ const row=(name,control,units='')=>{
+  const format=()=>units==='°'?Number(control.value).toFixed(1)+'°':control.value+units;
+  const out=$('output',{textContent:format()}),label=$('label',{className:'recon-field'},[$('span',{textContent:name}),control,out]);
+  control.addEventListener('input',()=>out.textContent=format());
+  if(control.type==='range')label.append($('div',{className:'range-limits'},[$('span',{textContent:control.min}),$('span',{textContent:control.max})]));
+  return label;
+ };
+ const slab=$('input',{type:'range',min:'1',max:String(Math.max(50,r.slab)),step:'1',value:String(r.slab),ariaLabel:'Slab thickness in millimetres'}),spacing=$('input',{type:'number',min:'.2',max:'10',step:'.1',value:String(r.spacing),ariaLabel:'Output spacing in millimetres'});
  const position=$('input',{type:'range',min:'0',max:String(s.pos.length-1),step:'1',value:String(S[i].idx),ariaLabel:'Plane position'});
- const angles=['Pitch','Yaw','Roll'].map((name,k)=>$('input',{type:'range',min:'-180',max:'180',step:'1',value:String(r.angles[k]),ariaLabel:name+' in degrees'}));
+ const angles=['Pitch','Yaw','Roll'].map((name,k)=>$('input',{type:'range',min:'-180',max:'180',step:'.1',value:String(r.angles[k]),ariaLabel:name+' in degrees'}));
  const status=$('p',{className:'recon-status',role:'status',ariaLive:'polite',textContent:r.volume.warning||''});
  const changes=preview=>{
   // Each event resolves the active series afresh; stale controls never edit another viewport.
@@ -2079,10 +2045,14 @@ function refreshReconstructionInspector(i){
  for(const control of [slab,...angles]){control.addEventListener('input',()=>changes(true));control.addEventListener('change',()=>changes(false));control.addEventListener('blur',()=>{if(P.series[hover]?.reconstruction?.preview)changes(false);});}
  mode.onchange=plane.onchange=spacing.onchange=()=>changes(false);slab.disabled=r.mode==='MPR';
  position.addEventListener('input',()=>{setIdx(hover,Number(position.value));position.nextElementSibling.textContent=(Number(position.value)+1)+' / '+P.series[hover].pos.length;});
- const reset=$('button',{textContent:'Reset oblique',className:'recon-reset',title:'Reset oblique angles — return this plane to its anatomical orientation'});reset.onclick=()=>{angles.forEach(a=>{a.value='0';a.nextElementSibling.textContent='0°';});changes(false);};
- mode.hidden=true;const extra=$('details',{className:'recon-advanced'},[$('summary',{textContent:'Plane & sampling'}),row('Plane',plane),row('Position',position),row('Pixel spacing',spacing,' mm')]);reconPanel.append(modeTabs,mode,info,row('Slab Thickness',slab,' mm'),$('h4',{textContent:'Oblique Angles'}));
+ const reset=$('button',{textContent:'Reset oblique',className:'recon-reset',title:'Reset oblique angles — return this plane to its anatomical orientation'});reset.onclick=()=>{angles.forEach(a=>{a.value='0';a.nextElementSibling.textContent='0.0°';});changes(false);};
+ mode.hidden=true;const fullSlab=$('input',{type:'number',min:'.2',max:'200',step:'.2',value:String(r.slab),ariaLabel:'Extended slab thickness in millimetres'});
+ fullSlab.onchange=()=>{const v=Number(fullSlab.value);if(v>=.2&&v<=200){slab.min=String(Math.min(1,v));slab.max=String(Math.max(50,v));slab.value=String(v);slab.nextElementSibling.textContent=v+' mm';changes(false);}};
+ const extra=$('details',{className:'recon-advanced'},[$('summary',{textContent:'Plane & sampling'}),row('Plane',plane),row('Position',position),row('Pixel spacing',spacing,' mm'),row('Extended slab',fullSlab,' mm')]);
+ const slabField=row('Slab Thickness',slab,' mm');slabField.classList.add('recon-slab-field');
+ reconPanel.append(modeTabs,mode,info,slabField,$('h4',{textContent:'Oblique Angles'}));
  position.nextElementSibling.textContent=(S[i].idx+1)+' / '+s.pos.length;
- angles.forEach((a,k)=>reconPanel.append(row(['Pitch','Yaw','Roll'][k],a,'°')));
+ for(const [name,k] of [['Axial',2],['Coronal',1],['Sagittal',0]]){const field=row(name,angles[k],'°');field.classList.add('recon-angle-field');field.dataset.axis=name;reconPanel.append(field);}
  if(S[i].moreGroup)S[i].moreGroup.append(reset,extra);reconPanel.append(status,$('p',{className:'recon-note',textContent:'Original: unfiltered thin reformat. ROI: thin plane, excluding slab projection. Changing geometry starts a new measurement plane.'}));
 }
 function updateReconstructionCard(index){
@@ -2180,18 +2150,19 @@ for(let r=1;r<=4;r++)for(let c=1;c<=4;c++){
  cell.onclick=()=>{setLayout(r,c);layoutMenu.hidden=true;};matrix.append(cell);layoutCells.push({button:cell,row:r,col:c});
 }
 layoutMenu.append(layoutCaption,matrix);layoutPicker.append(layout);bar.append(layoutPicker);document.body.append(layoutMenu);
-layout.onclick=()=>{layoutMenu.hidden=!layoutMenu.hidden;const b=layout.getBoundingClientRect();layoutMenu.style.top=(b.bottom+4)+'px';layoutMenu.style.left=Math.min(b.left,window.innerWidth-150)+'px';};
+layout.onclick=()=>{layoutMenu.hidden=!layoutMenu.hidden;const b=(document.getElementById('header-layout-picker')||layout).getBoundingClientRect();layoutMenu.style.top=(b.bottom+4)+'px';layoutMenu.style.left=Math.min(b.left,window.innerWidth-150)+'px';};
 document.addEventListener('pointerdown',e=>{if(!layoutMenu.contains(e.target)&&e.target!==layout)layoutMenu.hidden=true;});
 function setLayout(rows,cols){
  if(expandedViewport!==null){resumeExpandedCine();expandedViewport=null;expandedLayout=null;}
  S.forEach(st=>{if(st.lens)st.lens.hidden=true;st.lensPos=null;});
  document.querySelectorAll('[data-layout]').forEach(b=>b.classList.toggle('on',b.dataset.layout===rows+','+cols));
  layoutRows=rows;layoutCols=cols;layout.textContent='Layout: '+rows+' × '+cols;
- grid.style.gridTemplateColumns='repeat('+cols+',minmax(0,1fr))';grid.style.gridTemplateRows='repeat('+rows+',minmax(0,1fr))';grid.classList.toggle('dense',rows>=3||cols>=3);
+ grid.style.gridTemplateColumns=rows===2&&cols===2?'minmax(0,435fr) minmax(0,448fr)':'repeat('+cols+',minmax(0,1fr))';grid.style.gridTemplateRows=rows===2&&cols===2?'minmax(0,434fr) minmax(0,497fr)':'repeat('+rows+',minmax(0,1fr))';grid.classList.toggle('dense',rows>=3||cols>=3);
  S.forEach((st,i)=>{st.panel.hidden=i>=rows*cols;if(st.panel.hidden&&st.play){clearInterval(st.play);st.play=null;}});
  if(hover>=rows*cols)activate(0);requestAnimationFrame(drawAll);
 }
 
+document.getElementById('header-layout-picker').onclick=e=>{e.stopPropagation();layout.click();};
 const readingNotice=$('span',{textContent:'Geometry linking requires matching DICOM frame of reference.'});readingNotice.style.cssText='font-size:10px;color:#7296ac';
 const reading=$('details'),readingSummary=$('summary',{textContent:'Reading layouts'});reading.append(readingSummary);bar.append(reading);
 const readingSelect=$('select',{ariaLabel:'Reading preset'}),layoutName=$('input',{type:'text',placeholder:'Layout name',maxLength:40,ariaLabel:'Layout name'});
@@ -2318,14 +2289,14 @@ P.series.forEach((item,i)=>{
   const refreshSegments=[];displayGroup.append(wlControls,bOriginal);
   for(const [name,select] of [['Smoothening',filters.smooth],['Sharpening',filters.sharp]]){
     select.hidden=true;const block=$('div',{className:'reference-filter'}),segments=$('div',{className:'filter-segments'});
-    block.append($('h4',{textContent:name}),select,segments);
+    block.append($('h4',{textContent:name==='Smoothening'?'Smoothing':name}),select,segments);
     const buttons=[];for(let n=1;n<=5;n++){const button=$('button',{textContent:n===0?'Off':String(n),title:name+' — level '+n+'. Click the active level again to turn off.',ariaLabel:name+' level '+n});button.onclick=()=>{select.value=String(Number(select.value)===n?0:n);select.dispatchEvent(new Event('change'));};buttons.push(button);segments.append(button);}
     refreshSegments.push(()=>buttons.forEach((button,n)=>{const on=Number(select.value)===n+1;button.classList.toggle('selected',on);button.setAttribute('aria-pressed',String(on));}));displayGroup.append(block);
   }
   st.refreshReferenceDisplay=()=>{for(const {name,value,range} of wlInputs){const n=name==='width'?st.hi-st.lo:(st.hi+st.lo)/2,span=Math.max(1,s.wl.full[1]-s.wl.full[0]);if(document.activeElement!==value)value.value=String(Math.round(n));range.min=String(name==='width'?.01:Math.min(s.wl.full[0],n));range.max=String(name==='width'?Math.max(span*2,n):Math.max(s.wl.full[1],n));if(document.activeElement!==range)range.value=String(n);}refreshSegments.forEach(f=>f());};
   const moreGroup=$('details',{className:'reference-more-tools'},[$('summary',{textContent:'More image tools'})]);
   moreGroup.firstChild.dataset.referenceText='true';const head=pnl.querySelector('.hd');for(const node of Array.from(head.children))if(!node.classList.contains('ttl'))moreGroup.append(node);head.append(displayGroup,moreGroup);st.moreGroup=moreGroup;st.refreshReferenceDisplay();
-  grid.append(pnl);st.header=pnl.querySelector(".hd");
+  grid.append(pnl);st.header=pnl.querySelector(".hd");const planeTitle=pnl.querySelector('.ttl');planeTitle.tabIndex=0;planeTitle.title=s.title+' — click for reconstruction plane controls';planeTitle.onclick=e=>{e.stopPropagation();activate(i);if(s.reconstruction){st.moreGroup.open=true;st.moreGroup.querySelector('.recon-advanced')?.setAttribute('open','');}else openReconstruction('MPR');};
   const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
   st.clear=()=>{endOriginal(i,false);st.filterCache=null;stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover){updateActiveSummary();refreshInspector(i);}};
   st.displayConfig=()=>({rotation:st.rotation,flipH:st.flipH,flipV:st.flipV,smooth:st.smooth,sharp:st.sharp,wl:sel.value,inv:st.inv,enh:st.enh,ctLike:st.ctLike,ctContrast:st.ctContrast,ctSharp:st.ctSharp});
@@ -2507,7 +2478,7 @@ def build_empty_workspace():
 
     fit_script = '<script>' + VIEWER_HTML.split('<script>')[1].split('const P=')[0] + '</script>'
     tools=tools.replace('<div class="brand-tag">IMAGE TOOLS</div>', '<button data-open-workflow title="Open study — upload a DICOM ZIP or change study and processing settings" aria-label="Open study"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6h7l2 3h9v11H3ZM3 9V4h7l2 2h8v3"/></svg></button>' )
-    header=WORKSTATION_HEADER_HTML.replace('Study workspace','No study loaded').replace('MRI · Image review','Open a DICOM ZIP to begin').replace('<div id="bar"><div class="brand-tag">IMAGE TOOLS</div></div>',tools)
+    header=WORKSTATION_HEADER_HTML.replace('>Study <span>', '>No study <span>').replace('MRI · Image review','Open a DICOM ZIP to begin').replace('<div id="bar"><div class="brand-tag">IMAGE TOOLS</div></div>',tools)
     header=re.sub(r'<button data-layout=', '<button disabled data-layout=',header)
     tool_rail=re.sub(r'<div class="tool-scroll">.*?</div>', '',tool_rail)
     tool_rail=re.sub(r'(<button[^>]+aria-label="([^"]+)"[^>]*>.*?</svg>)(</button>)',lambda m:m[1]+'<span>'+escape(m[2].replace(' projection','').replace(' / Compose',''))+'</span>'+m[3],tool_rail)
@@ -2517,7 +2488,7 @@ def build_empty_workspace():
 def build_viewer_html(series_payloads, patient_text=None, panel_height=360, study_key=None):
     n = len(series_payloads)
     cols = 2 if n >= 2 else 1
-    payload = dict(series=series_payloads, patient=patient_text, studyKey=study_key)
+    payload = dict(series=series_payloads, patient=patient_text, studyKey=study_key, viewerBuild=APP_BUILD)
     data = json.dumps(payload, separators=(",", ":")).replace("</", r"<\/")
     html = (VIEWER_HTML.replace("__PAYLOAD__", data).replace("__COLS__", str(cols)).replace("__PANEL_H__", str(panel_height)))
     rows = -(-n // cols)
@@ -2552,47 +2523,14 @@ html,body,[data-testid="stAppViewContainer"]{background:#080c12!important;color:
 [data-baseweb="tag"]{background:#1b445b!important;color:#b6e8fb!important}
 [data-baseweb="select"] input,[data-baseweb="select"] span{color:#d4deea!important}
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] strong{color:#c7d7e6}
-
-.main-header{height:53px;display:flex;align-items:center;gap:16px;border-bottom:1px solid #26313f;margin-bottom:2px}
-.wordmark{font-size:21px;font-weight:700;letter-spacing:-1px;color:#f1f7ff;display:flex;align-items:center;gap:9px}
-.logo-mark{width:27px;height:27px;border:1px solid #55bcdf;border-radius:7px;display:grid;place-items:center;color:#55bcdf;font-size:23px}
-.brand-sub{font-size:10px;letter-spacing:1.4px;color:#6c8199;line-height:1.5}
-.header-tab{align-self:stretch;display:flex;align-items:center;border-bottom:2px solid #55bcdf;color:#d4deea;font-size:12px;padding:0 14px;margin-left:26px}
-.header-meta{margin-left:auto;font-size:11px;color:#8499b0;display:flex;gap:15px;align-items:center}
-.status-dot{width:6px;height:6px;border-radius:100%;background:#55bcdf;display:inline-block;margin-right:6px}
-.study-strip{display:flex;gap:18px;align-items:center;padding:10px 14px;background:#111923;border:1px solid #26313f;border-radius:4px;font-size:12px;color:#a4b7ca;flex-wrap:wrap}
-.study-strip b{color:#d9e6f2;font-weight:500}
-.study-strip .right{margin-left:auto;color:#6f849a;font-size:11px}
-@media(max-width:700px){.header-tab,.brand-sub{display:none}.header-meta{font-size:10px}.main-header{gap:8px}}
-/* Host chrome: the same visual palette as the embedded workstation. */
-html,body,[data-testid="stAppViewContainer"]{background:radial-gradient(ellipse at 0 0,#1a2d3a 0,transparent 44%),#0b111b!important;color:#dce5ee!important;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif!important}
-[data-testid="stHeader"]{background:transparent!important}
-[data-testid="stMainBlockContainer"]{padding:2.2rem 1.4rem .4rem!important}
-[data-testid="stVerticalBlock"]{gap:.8rem}
-.main-header{height:65px;margin-bottom:5px;border-bottom:0;gap:15px}
-.wordmark{font-size:25px;font-weight:550;letter-spacing:-.8px;color:#f2f6fb}.logo-mark{width:39px;height:39px;border:1px solid #537a93;border-radius:12px;background:linear-gradient(140deg,#284559,#182b3b);font-size:29px;color:#91daf5;box-shadow:0 5px 18px #0002}
-.brand-sub{color:#9ab1c6;font-size:10px;letter-spacing:1.6px;line-height:1.7}
-.header-tab{align-self:center;height:38px;margin-left:25px;border:1px solid #354858;border-radius:12px;background:linear-gradient(140deg,#223241,#182332);font-size:12px;color:#cbd9e6}
-.header-meta{color:#96adbf;font-size:11px}.status-dot{background:#71cbee;box-shadow:0 0 9px #71cbee33}
-.study-strip{min-height:57px;background:linear-gradient(120deg,#20303f,#172230);border:1px solid #3a5062;border-radius:16px;padding:14px 20px;color:#a9bdcf;gap:24px;font-size:12px;box-shadow:inset 0 1px #ffffff05}
-.study-strip b{color:#eef5fb;font-size:14px;font-weight:500}.study-strip .right{font-size:11px;color:#91aac0}
-[data-testid="stSidebar"]{background:linear-gradient(155deg,#1a2b39,#141d2a 65%)!important;border-right:1px solid #3c5366;min-width:290px;max-width:320px;box-shadow:12px 0 40px #0003}
-[data-testid="stSidebarUserContent"]{padding:1.4rem 1.1rem!important}
-[data-testid="stExpander"]{border-radius:12px;background:linear-gradient(140deg,#203040,#182636);border-color:#374d60}
-[data-testid="stFileUploaderDropzone"]{background:#1a2e40;border:1px dashed #4d7691;border-radius:14px}
-[data-testid="stFileUploaderDropzone"] button{border-radius:9px;background:#274b64;border-color:#4c7895;color:#d8f1fd}
-@media(max-width:760px){[data-testid="stMainBlockContainer"]{padding:2rem .45rem .3rem!important}.main-header{height:52px}.header-meta{font-size:10px}.header-tab{margin-left:0}.wordmark{font-size:21px}.study-strip{padding:10px 12px;gap:12px}}
-[data-testid="stMainBlockContainer"]{padding:.5rem .5rem 0!important} [data-testid="stMain"]>[data-testid="stVerticalBlock"]{gap:0!important}
-[data-testid="stElementContainer"]:has(.main-header),[data-testid="stElementContainer"]:has(.study-strip){display:none!important}
-.main-header,.study-strip{display:none!important}
-
-[data-testid="stSidebar"][aria-expanded="false"]{width:0!important;min-width:0!important;max-width:0!important;border:0!important;box-shadow:none!important}
+html,body,[data-testid="stAppViewContainer"]{background:#030b12!important;color:#d7e7f7!important;font-family:Arial,'Segoe UI',sans-serif!important}
+[data-testid="stMainBlockContainer"]{padding:0!important;max-width:none!important;height:100vh;overflow:hidden}
 [data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"]{gap:0!important}
 [data-testid="stHeader"],[data-testid="stToolbar"]{display:none!important}
-
-[data-testid="stSidebar"]{position:fixed!important;top:0;bottom:0;z-index:1000;width:300px!important}
 [data-testid="stMain"]{margin-left:0!important;width:100%!important}
-[data-testid="stSidebar"][data-collapsed="true"]{display:none!important;min-width:0!important;max-width:0!important;width:0!important;border:0!important;box-shadow:none!important;visibility:hidden}
+[data-testid="stSidebar"]{position:fixed!important;top:0;bottom:0;z-index:1000;width:300px!important;min-width:290px;max-width:320px;background:linear-gradient(110deg,#0b1b29,#07131f)!important;border-right:1px solid #283f51;box-shadow:10px 0 30px #0006}
+[data-testid="stSidebar"][data-collapsed="true"],[data-testid="stSidebar"][aria-expanded="false"]{display:none!important;min-width:0!important;max-width:0!important;width:0!important;border:0!important;box-shadow:none!important}
+[data-testid="stSidebarUserContent"]{padding:1.2rem 1rem!important}
 
 </style>
 """
@@ -2698,15 +2636,10 @@ def build_study_overview(series, loaded=None, selected=None, failed=0):
 
 
 def main():
-    st.set_page_config(page_title="SD-DCM | Clinical Workstation", page_icon="◉", layout="wide", initial_sidebar_state="collapsed")
+    st.set_page_config(page_title="SD-DCM | A10", page_icon="◉", layout="wide", initial_sidebar_state="collapsed")
+    logging.getLogger("dicom_viewer").warning("SD-DCM runtime build: %s | source_sha256=%s", APP_BUILD, hashlib.sha256(open(__file__,"rb").read()).hexdigest()[:16])
     st.markdown(CSS, unsafe_allow_html=True)
     
-    st.markdown(
-        '<div class="main-header"><div class="wordmark"><span class="logo-mark">+</span> SD-DCM</div>'
-        '<div class="brand-sub">CLINICAL<br>WORKSTATION</div><div class="header-tab">Study workspace</div>'
-        '<div class="header-meta"><span><i class="status-dot"></i>Image review</span><span>Research use</span></div></div>',
-        unsafe_allow_html=True,
-    )
     sb = st.sidebar
     sb.caption("Viewer build · " + APP_BUILD)
     sb.markdown("### Study & processing")
@@ -2764,8 +2697,6 @@ def main():
                     "**I** · Invert · **E** · Enhancement")
 
     if up is None:
-        st.markdown('<div class="study-strip"><b>No study loaded</b><span>Open a DICOM ZIP in the study browser</span>'
-                    '<span class="right">Identifiers hidden by default</span></div>', unsafe_allow_html=True)
         embed_html(build_empty_workspace(), height=760)
         return
 
@@ -2790,13 +2721,9 @@ def main():
         return
         
     total_frames = sum(sum(max(1, int(getattr(d, "NumberOfFrames", 1) or 1)) for d in item["items"]) for item in series)
-    st.markdown(
-        f'<div class="study-strip"><b>Study loaded</b><span>{len(series)} series</span><span>{total_frames} images</span>'
-        '<span class="right">ZIP archive · Select series in the study browser</span></div>', unsafe_allow_html=True)
-
     # Study Browser Ingestion Logs
     if skipped or dup:
-        with st.expander("Import details", expanded=False):
+        with sb.expander("Import details", expanded=False):
             for why, n in skipped.items():
                 st.markdown(f"⚠️ *Skipped Entry:* `{n} instances` flagged as: **{why}**")
             if dup:
