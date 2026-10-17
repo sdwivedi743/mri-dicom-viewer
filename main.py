@@ -15,6 +15,8 @@ import hashlib
 import logging
 import tempfile
 import shutil
+import uuid
+from pathlib import Path
 from html import escape
 import io
 import json
@@ -31,9 +33,33 @@ try:
 except ImportError:
     st = None
 
-APP_BUILD = "2026.10.17-performance.11"
+APP_BUILD = "2026.10.17-transport.12"
 MAX_PANELS = 6
-WORKSPACE_PAYLOAD_BUDGET = 96 * 1024 * 1024
+class FrameStore:
+    """Session-owned, disk-backed compressed frames; never published as static URLs."""
+    def __init__(self):
+        self.owner = tempfile.TemporaryDirectory(prefix="dicom-frames-")
+        self.keys = set()
+    def put(self, encoded):
+        if isinstance(encoded, dict): return encoded
+        key = uuid.uuid4().hex
+        (Path(self.owner.name) / key).write_text(encoded, encoding="ascii")
+        self.keys.add(key)
+        return {"frame": key}
+    def read(self, ref):
+        key = ref.get("frame") if isinstance(ref, dict) else ref
+        if key not in self.keys: raise ValueError("Frame is not part of this session's study.")
+        return (Path(self.owner.name) / key).read_text(encoding="ascii")
+    def spill(self, payload):
+        for item in payload["items"]:
+            for channel in ("o", "e"):
+                if channel in item: item[channel] = self.put(item[channel])
+        return payload
+
+
+def resolve_packed_frame(value):
+    return st.session_state["_frame_store"].read(value) if isinstance(value, dict) else value
+
 
 PRESETS = {
     "Natural":  dict(denoise=30, detail=80, sharpen=20, grain=20, shading=0),
@@ -459,7 +485,7 @@ def pack_series(orig_frames, enh_frames=None):
     return dict(off=mn, scale=scale, items=items)
 
 def unpack_frame(b64, rows, cols, off, scale):
-    u = np.frombuffer(zlib.decompress(base64.b64decode(b64)), "<u2").reshape(rows, cols)
+    u = np.frombuffer(zlib.decompress(base64.b64decode(resolve_packed_frame(b64))), "<u2").reshape(rows, cols)
     return off + u.astype(np.float32) * scale
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -564,7 +590,7 @@ def cine_series(s):
     return False
 
 
-def stream_pack_series(s, progress=None):
+def stream_pack_series(s, progress=None, store=None):
     count = frame_count(s)
     sample_indices = set(np.linspace(0, count-1, min(5, count), dtype=int).tolist())
     samples = []; mn = float("inf"); mx = -float("inf"); k = 0
@@ -585,9 +611,7 @@ def stream_pack_series(s, progress=None):
             u = np.clip(np.rint((f-mn)/scale), 0, 65535).astype("<u2")
             encoded = base64.b64encode(zlib.compress(u.tobytes(),3)).decode("ascii")
             packed_bytes += len(encoded) + 16
-            if packed_bytes > WORKSPACE_PAYLOAD_BUDGET:
-                raise RuntimeError("Actual compressed series payload exceeds the embedded viewer capacity. This series was not partially loaded.")
-            items.append({"o":encoded})
+            items.append({"o":store.put(encoded) if store else encoded})
             k += 1
             if progress and k % 10 == 0: progress(.5+.5*k/count)
     return dict(off=mn, scale=scale, items=items), info, mn, mx
@@ -1089,13 +1113,11 @@ def volume_support(s):
     return dict(reason=None,sliceThickness=float(np.median(thickness)) if thickness else None)
 
 
-def build_payload_series(s, enhance, params, progress=None, force_stream=False, enhance_requested=None):
+def build_payload_series(s, enhance, params, progress=None, force_stream=False, enhance_requested=None, store=None):
     streamed = force_stream or cine_series(s) or payload_estimate(s, enhance) > 24*1024*1024
-    if payload_estimate(s, False) > 2*1024*1024*1024:
-        raise RuntimeError("This series exceeds the current decoded-workload limit. It was not partially loaded.")
     frames, errors = [], []
     if streamed:
-        packed, info, source_min, source_max = stream_pack_series(s, progress)
+        packed, info, source_min, source_max = stream_pack_series(s, progress, store)
     else:
         for index, ds in enumerate(s["items"], 1):
             try:
@@ -1202,7 +1224,7 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
 # ----------------------------------------------------------------------------------------------------------------
 #  Diagnostic Interface Engine (Dark-Mode Workspace Layer)
 # ----------------------------------------------------------------------------------------------------------------
-WORKSTATION_HEADER_HTML = r"""<header id="workstation-header" data-viewer-build="2026.10.17-performance.11"><button class="workstation-brand" data-open-workflow title="SD-DCM · Build P11 — open study and processing settings"><svg viewBox="0 0 36 36" aria-hidden="true"><path d="M18 6c-7-6-17 3-12 10-6 7 2 15 9 11 4 7 14 3 12-5 8-4 4-15-3-15-1-3-4-4-6-1ZM18 6v23M8 12l19 10M8 23l16-12"/></svg><span>SD-DCM</span></button><button id="header-study" data-open-workflow title="Open study settings">Study <span>⌄</span></button><div id="header-study-meta">MRI · Image review</div><div class="header-layouts"><button id="header-layout-picker" title="Viewport layout — choose one to four rows and columns" aria-label="Choose custom viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM12 3v18M3 12h18"/></svg></button><button data-layout="2,2" title="2 × 2 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM12 3v18M3 12h18"/></svg><span>2x2</span></button><button data-layout="1,1" title="1 × 1 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3Z"/></svg><span>1x1</span></button><button data-layout="3,3" title="3 × 3 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM9 3v18M15 3v18M3 9h18M3 15h18"/></svg><span>3x3</span></button></div><details id="workspace-more"><summary aria-label="All viewer tools" title="All viewer tools — measurements, orientation, linking, layout and annotations">•••</summary><div id="bar"><div class="brand-tag">IMAGE TOOLS</div></div></details></header>"""
+WORKSTATION_HEADER_HTML = r"""<header id="workstation-header" data-viewer-build="2026.10.17-transport.12"><button class="workstation-brand" data-open-workflow title="SD-DCM · Build P12 — open study and processing settings"><svg viewBox="0 0 36 36" aria-hidden="true"><path d="M18 6c-7-6-17 3-12 10-6 7 2 15 9 11 4 7 14 3 12-5 8-4 4-15-3-15-1-3-4-4-6-1ZM18 6v23M8 12l19 10M8 23l16-12"/></svg><span>SD-DCM</span></button><button id="header-study" data-open-workflow title="Open study settings">Study <span>⌄</span></button><div id="header-study-meta">MRI · Image review</div><div class="header-layouts"><button id="header-layout-picker" title="Viewport layout — choose one to four rows and columns" aria-label="Choose custom viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM12 3v18M3 12h18"/></svg></button><button data-layout="2,2" title="2 × 2 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM12 3v18M3 12h18"/></svg><span>2x2</span></button><button data-layout="1,1" title="1 × 1 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3Z"/></svg><span>1x1</span></button><button data-layout="3,3" title="3 × 3 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM9 3v18M15 3v18M3 9h18M3 15h18"/></svg><span>3x3</span></button></div><details id="workspace-more"><summary aria-label="All viewer tools" title="All viewer tools — measurements, orientation, linking, layout and annotations">•••</summary><div id="bar"><div class="brand-tag">IMAGE TOOLS</div></div></details></header>"""
 INSPECTOR_HTML = r"""<aside id="inspector" aria-label="Active viewport settings"><div class="inspector-heading">Reconstruction <span>⌃</span></div><div id="inspector-title">No active series</div><section id="reconstruction-controls" hidden aria-label="Live reconstruction controls"></section><div id="inspector-controls" class="hd inspector-actions"></div><div id="inspector-empty" class="inspector-empty">Open a study to begin.<br>Select any viewport to access its display and review controls.</div><div class="inspector-help">Hover over an icon for its name and function.<br>Hold the eye icon to compare with Original.<br>Double-click an image to expand or restore its layout.</div><button class="inspector-settings" data-open-workflow title="Study &amp; processing settings — open upload, enhancement, Signal Balance, station matching and diffusion review" aria-label="Study and processing settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 3v8M16 13v8"/></svg></button></aside>"""
 
 VIEWER_HTML = r"""
@@ -1400,7 +1422,31 @@ function openStudySettings(){try{const doc=window.parent.document,side=doc.query
  }catch(e){}const info=document.getElementById('inspector-title');if(info)info.textContent='Use the sidebar arrow at the top to open study settings.';}
 document.querySelectorAll('[data-open-workflow]').forEach(b=>b.addEventListener('click',openStudySettings));
 const P=__PAYLOAD__;
-document.documentElement.dataset.viewerBuild=P.viewerBuild;document.title='SD-DCM · P11';
+
+// Session component bridge: one bounded batch in flight; pixels never enter the page payload.
+const frameRequests=new Map();let frameBatch=null,framePumpTimer=null;
+function pumpFrames(){
+ if(frameBatch||!frameRequests.size)return;
+ const keys=[...frameRequests.keys()].sort((a,b)=>frameRequests.get(b).priority-frameRequests.get(a).priority).slice(0,16),id=crypto.randomUUID();frameBatch={id,keys};
+ parent.postMessage({isStreamlitMessage:true,type:'streamlit:setComponentValue',value:{id,keys},dataType:'json'},'*');
+ frameBatch.timer=setTimeout(()=>{for(const key of keys){const q=frameRequests.get(key);if(q){q.reject(Error('Image transfer timed out. Please retry the slice.'));frameRequests.delete(key);}}frameBatch=null;pumpFrames();},60000);
+}
+function requestPackedFrame(ref,priority=0){
+ const key=ref.frame;if(frameRequests.has(key)){const q=frameRequests.get(key);q.priority=Math.max(q.priority,priority);return q.promise;}
+ let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});frameRequests.set(key,{promise,resolve,reject,priority});
+ clearTimeout(framePumpTimer);framePumpTimer=setTimeout(pumpFrames,0);return promise;
+}
+window.addEventListener('message',e=>{
+ if(e.source!==parent||e.data.type!=='streamlit:render')return;
+ const response=e.data.args?.response;if(!response||response.id!==frameBatch?.id)return;
+ clearTimeout(frameBatch.timer);
+ for(const [key,value] of Object.entries(response.frames||{})){const q=frameRequests.get(key);if(q){q.resolve(value);frameRequests.delete(key);}}
+ for(const [key,error] of Object.entries(response.errors||{})){const q=frameRequests.get(key);if(q){q.reject(Error(error));frameRequests.delete(key);}}
+ frameBatch=null;pumpFrames();
+});
+parent.postMessage({isStreamlitMessage:true,type:'streamlit:setFrameHeight',height:Math.max(300,parent.innerHeight-(window.frameElement?.getBoundingClientRect().top||0))},'*');
+
+document.documentElement.dataset.viewerBuild=P.viewerBuild;document.title='SD-DCM · P12';
 const catalog=P.series;
 P.series=Array.from({length:16},(_,i)=>i<Math.min(4,catalog.length)?catalog[i]:null);
 const PH=__PANEL_H__, N=16;
@@ -1472,7 +1518,7 @@ async function buildReconstructionVolume(source,index,progress=()=>{}){
   const used=[...reconVolumes.values()].reduce((n,a)=>n+a.data.byteLength,0);
   if(used+v.bytes>RECON_MAX_BYTES)throw Error('The reconstruction working-memory budget is in use by other source volumes. Existing images remain available.');
   v.data=new Uint16Array(v.rows*v.cols*v.depth);v.source=index;v.workerKey=key;
-  for(let k=0;k<v.depth;k++){const a=await inflate(source.items[v.order[k]].o);if(a.length!==v.rows*v.cols)throw Error('Decoded frame dimensions do not match the source stack.');v.data.set(a,k*v.rows*v.cols);progress((k+1)/v.depth);}
+  for(let start=0;start<v.depth;start+=16){const frames=await Promise.all(Array.from({length:Math.min(16,v.depth-start)},(_,j)=>inflate(source.items[v.order[start+j]].o)));for(let j=0;j<frames.length;j++){const a=frames[j],k=start+j;if(a.length!==v.rows*v.cols)throw Error('Decoded frame dimensions do not match the source stack.');v.data.set(a,k*v.rows*v.cols);}progress(Math.min(v.depth,start+16)/v.depth);}
   reconVolumes.set(key,v);return v;
  })();reconLoading.set(key,job);try{return await job;}finally{reconLoading.delete(key);}
 }
@@ -1494,7 +1540,7 @@ function makeReconstructionSeries(source,v,options){
  const label=(spec.oblique?'Oblique ':'')+spec.plane+' '+spec.mode+(spec.mode==='MPR'?'':' · '+spec.slab+' mm');
  return {...source,title:label,sequence:label+' · '+source.sequence,rows:spec.rows,cols:spec.cols,spacing:[spec.spacing,spec.spacing],thickness:spec.mode==='MPR'?spec.spacing:spec.slab,spacingKnown:true,plane:spec.oblique?'Oblique':spec.plane,geometry,pos:geometry.map(g=>rDot(g.origin,g.normal)),items:Array.from({length:spec.count},()=>({o:''})),reconstruction:r,derivedComposite:false,stationSignature:null,stationOriginalWL:null,stationMatch:null,restrictedCandidates:null,diffusionPair:null,hasEnh:spec.mode!=='MPR',streamed:false,volumeSupport:{reason:'Choose the original source stack.'},memoryId:'recon-'+Date.now()+'-'+Math.random().toString(36).slice(2),presentation:{default:source.wl.dicom?'dicom':'auto',field:null,base:source.presentation?.base||0},processing:{engine:label+' · interpolated from source',frames:[],applied:spec.count}};
 }
-async function decodeCatalogFrame(s,k,enh,cancelled=()=>false){return s.reconstruction?reconstructionPixels(s,k,enh,cancelled):inflate(enh&&s.items[k].e?s.items[k].e:s.items[k].o);}
+async function decodeCatalogFrame(s,k,enh,cancelled=()=>false){return s.reconstruction?reconstructionPixels(s,k,enh,cancelled):inflate(enh&&s.items[k].e?s.items[k].e:s.items[k].o,cancelled.priority||0);}
 // RECONSTRUCTION_CORE_END
 
 // COMPOSE_CORE_START
@@ -1578,10 +1624,11 @@ let hover=0;
 const $=(t,a,c)=>{const e=document.createElement(t);if(a)Object.assign(e,a);if(c)c.forEach(x=>e.append(x));return e;};
 
 const decodedFrames=new Map(),decodingFrames=new Map();let decodedBytes=0;
-async function inflate(b64){
+async function inflate(b64,priority=0){
+ const ref=b64;if(typeof b64==='object')b64='frame:'+b64.frame;
  if(decodedFrames.has(b64)){const a=decodedFrames.get(b64);decodedFrames.delete(b64);decodedFrames.set(b64,a);return a;}
  if(decodingFrames.has(b64))return decodingFrames.get(b64);
- const job=(async()=>{const bin=atob(b64),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
+ const job=(async()=>{const packed=typeof ref==='object'?await requestPackedFrame(ref,priority):b64;const bin=atob(packed),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
   const buf=await new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer(),a=new Uint16Array(buf);
   decodedFrames.set(b64,a);decodedBytes+=a.byteLength;while(decodedBytes>32*1024*1024&&decodedFrames.size>1){const key=decodedFrames.keys().next().value;decodedBytes-=decodedFrames.get(key).byteLength;decodedFrames.delete(key);}return a;
  })();decodingFrames.set(b64,job);try{return await job;}finally{decodingFrames.delete(b64);}
@@ -1590,6 +1637,8 @@ async function getFrame(i,idx,enh,cancelled=()=>false){
  const s=P.series[i],st=S[i],key=idx+(enh?'e':'o'),cache=st.cache;
  if(cache.has(key)){const v=cache.get(key);cache.delete(key);cache.set(key,v);return v;}
  cancelled.channel=cancelled.channel||'voxel-'+i;cancelled.priority=cancelled.priority??(i===hover?10:5);
+ // Warm nearby slices in the same transfer batch; failures are reported only if opened.
+ if(!s.reconstruction)for(const d of [-1,1,2,3]){const item=s.items[idx+d];if(item)inflate(enh&&item.e?item.e:item.o,1).catch(()=>{});}
  const arr=await decodeCatalogFrame(s,idx,enh,cancelled);if(!arr||cancelled())return new Uint16Array(0);
  cache.set(key,arr);if(cache.size>(s.reconstruction?8:8))cache.delete(cache.keys().next().value);return arr;
 }
@@ -2183,7 +2232,7 @@ stitchButton.onclick=()=>{
   try{const {result:r,tiles,ref}=pending;let max=1;for(let k=0;k<r.raw.length;k++)max=Math.max(max,r.raw[k],r.matched[k]);const scale=max/65535;
    const encode=async arr=>{const u=Uint16Array.from(arr,v=>Math.max(0,Math.min(65535,Math.round(v/scale))));const bytes=new Uint8Array(await new Response(new Blob([u.buffer]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());let b='';for(let i=0;i<bytes.length;i+=32768)b+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(b);};
    const o=await encode(r.raw),e=await encode(r.matched),item={...ref,title:'COMPOSED · '+tiles.length+' regions',sequence:'Derived composition · '+tiles.map(t=>t.title).join(' + '),rows:r.rows,cols:r.cols,spacing:r.geometry.spacing,geometry:[r.geometry],pos:[composeDot(r.geometry.origin,r.geometry.normal)],items:[{o,e}],off:0,scale,hasEnh:true,streamed:false,derivedComposite:true,stationSignature:null,stationOriginalWL:null,stationMatch:null,memoryId:'compose-'+Date.now(),presentation:{default:'auto',field:null,base:0},wl:{...ref.wl,auto:[...ref.wl.auto],full:[0,max]},processing:{engine:'Derived composition · feathered + signal matched',frames:['derived composite'],applied:1},provenance:tiles.map((t,i)=>({series:t.source,slice:t.slice,gain:r.gains[i]}))};
-   let size=JSON.stringify(item).length;for(const s of catalog)size+=JSON.stringify(s).length;if(size>96*1024*1024)throw Error('Composed image exceeds the viewer transport budget. Load fewer series.');
+
    catalog.push(item);appendSeriesCard(item,catalog.length-1);S[hover].assign(catalog.length-1);filterSeries();stitchDialog.close();
   }catch(e){status.textContent=e.message;add.disabled=false;}
   finally{busy=false;create.disabled=false;list.inert=false;}
@@ -2672,9 +2721,42 @@ def load_index(file_hash, _zbytes, grouping_version="spatial-reconstruction-v4")
     return series, skipped, dup
 
 def embed_html(html, height):
-    if hasattr(st, "iframe"):
-        return st.iframe(html, height=height)
-    return st.components.v1.html(html, height=height, scrolling=False)
+    if "_frame_store" not in st.session_state or "const P=" not in html:
+        return st.iframe(html, height=height) if hasattr(st, "iframe") else st.components.v1.html(html, height=height)
+    import streamlit.components.v1 as components
+    # A stable component path is essential: changing it remounts the iframe.
+    @st.cache_resource
+    def component_directory():
+        owner = tempfile.TemporaryDirectory(prefix="dicom-component-")
+        Path(owner.name, "index.html").write_text("""<!doctype html><script>
+        function boot(e){if(e.source!==parent||e.data.type!=='streamlit:render')return;
+          window.removeEventListener('message',boot);document.open();document.write(e.data.args.html);document.close();}
+        window.addEventListener('message',boot);
+        parent.postMessage({isStreamlitMessage:true,type:'streamlit:componentReady',apiVersion:1},'*');
+        </script>""", encoding="utf-8")
+        return owner
+    component = components.declare_component("dicom_frame_transport", path=component_directory().name)
+    store = st.session_state["_frame_store"]
+    identity = hashlib.sha256(html.encode()).hexdigest()
+    response_key = "_frame_response"
+    @st.fragment
+    def render_transport():
+        response = st.session_state.get(response_key)
+        request = component(html=html, response=response, height=height, key="dicom_transport_"+identity, default=None)
+        if not isinstance(request, dict) or request.get("id") == (response or {}).get("id"): return
+        keys = request.get("keys", [])
+        if not isinstance(keys, list) or len(keys) > 16: return
+        result = {}; errors = {}; size = 0
+        for key in keys:
+            if not isinstance(key, str): continue
+            try:
+                value = store.read(key)
+                if size and size + len(value) > 8*1024*1024: break
+                result[key] = value; size += len(value)
+            except (ValueError, OSError): errors[key] = "Image frame unavailable. Reload the study."
+        st.session_state[response_key] = dict(id=request.get("id"), frames=result, errors=errors)
+        st.rerun(scope="fragment")
+    render_transport()
 
 
 def build_study_overview(series, loaded=None, selected=None, failed=0):
@@ -2702,7 +2784,7 @@ def build_study_overview(series, loaded=None, selected=None, failed=0):
 
 
 def main():
-    st.set_page_config(page_title="SD-DCM | P11", page_icon="◉", layout="wide", initial_sidebar_state="collapsed")
+    st.set_page_config(page_title="SD-DCM | P12", page_icon="◉", layout="wide", initial_sidebar_state="collapsed")
     logging.getLogger("dicom_viewer").warning("SD-DCM runtime build: %s | source_sha256=%s", APP_BUILD, hashlib.sha256(open(__file__,"rb").read()).hexdigest()[:16])
     st.markdown(CSS, unsafe_allow_html=True)
     
@@ -2830,22 +2912,19 @@ def main():
     payloads = []
     progress_bar.progress(0.15, text="Preparing image workspace...")
     
-    actual_payload_bytes = 0
+    store = FrameStore()
+    st.session_state.pop("_frame_response", None)
+    st.session_state["_frame_store"] = store
     for idx, name in enumerate(chosen):
         s = labels[name]
         logging.getLogger("dicom_viewer").warning("DICOM series prepare: index=%s frames=%s estimated_original_bytes=%s cine=%s", idx, frame_count(s), payload_estimate(s), cine_series(s))
         try:
             progress_bar.progress(0.15 + 0.85 * idx / len(chosen), text=f"Preparing series {idx + 1}/{len(chosen)}: {s['desc']}...")
-            prepared = build_payload_series(s, study_enhance, params, enhance_requested=enhance, force_stream=original_estimate > 64*1024*1024,
+            prepared = build_payload_series(s, study_enhance, params, enhance_requested=enhance, force_stream=original_estimate > 64*1024*1024, store=store,
                 progress=lambda fraction, current=idx: progress_bar.progress(
                     0.15 + 0.85 * (current + fraction) / len(chosen),
                     text=f"Preparing series {current + 1}/{len(chosen)}..."))
-            actual_payload_bytes += len(json.dumps(prepared, separators=(",", ":")))
-            if actual_payload_bytes > WORKSPACE_PAYLOAD_BUDGET:
-                overview_slot.markdown(build_study_overview(series, loaded=0, selected=len(chosen)), unsafe_allow_html=True)
-                loading.empty()
-                st.error("The actual packed image data exceeds this embedded viewer's capacity. Open Series loading options and enable Load selected series only. No partial workspace is displayed.")
-                return
+            store.spill(prepared)
             payloads.append(prepared)
         except Exception as e:
             logging.getLogger("dicom_viewer").error("Series preparation failed: index=%s frames=%s exception=%s", idx, frame_count(s), type(e).__name__)
@@ -2872,9 +2951,7 @@ def main():
             if enabled:
                 payloads,match_log=match_station_payloads(payloads,match_selected,reference)
                 for message in match_log:st.caption(message)
-                if sum(len(json.dumps(p,separators=(",",":"))) for p in payloads)>WORKSPACE_PAYLOAD_BUDGET:
-                    st.error("Station matching exceeds the viewer budget. Disable matching or load fewer series.")
-                    return
+                for payload in payloads: store.spill(payload)
                 st.caption("Matched stations share the reference Auto window. Enhance toggles the matched display; hold Original restores each station's own source window. ROI values remain original.")
         elif len(eligible)<2:
             st.caption("Load at least two sagittal magnitude-MR series with standard geometry and acquisition timing metadata.")
@@ -2895,9 +2972,6 @@ def main():
                 p["restrictedCandidates"]=result
                 st.caption(result["reason"])
                 if result["status"]=="processed":st.caption(f"Research candidate regions across slices: {result['count']} (not a lesion count).")
-        if sum(len(json.dumps(p,separators=(",",":"))) for p in payloads)>WORKSPACE_PAYLOAD_BUDGET:
-            st.error("Diffusion review metadata exceeds the viewer budget. Disable research candidates or load fewer series.")
-            return
     # Patient Demographics Banner Customization
     patient = None
     if show_ids:
