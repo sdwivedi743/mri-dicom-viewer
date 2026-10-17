@@ -1010,6 +1010,79 @@ const PH=__PANEL_H__, N=16;
 let layoutRows=2,layoutCols=2,expandedViewport=null,expandedLayout=null;
 const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null,ctLike:false,ctContrast:1.25,ctSharp:.25,ctRestore:null,smooth:0,sharp:0,holdOriginal:false,filterCache:null});});
 const opt={sync:true,link:false,tool:'wl',overlays:true,refs:true,viewLink:false};
+// COMPOSE_CORE_START
+function composeDot(a,b){return a.reduce((s,v,k)=>s+v*b[k],0);}
+function composeSub(a,b){return a.map((v,k)=>v-b[k]);}
+function composeMedian(a){a=Array.from(a).sort((x,y)=>x-y);return a[Math.floor(a.length/2)];}
+function composeSample(t,x,y){
+ if(x<0||y<0||x>t.cols-1||y>t.rows-1)return null;
+ const ix=Math.floor(x),iy=Math.floor(y),xx=Math.min(ix+1,t.cols-1),yy=Math.min(iy+1,t.rows-1),fx=x-ix,fy=y-iy,d=t.data;
+ return (1-fy)*((1-fx)*d[iy*t.cols+ix]+fx*d[iy*t.cols+xx])+fy*((1-fx)*d[yy*t.cols+ix]+fx*d[yy*t.cols+xx]);
+}
+function composePoint(g,x,y){return g.origin.map((v,k)=>v+x*g.row[k]*g.spacing[1]+y*g.col[k]*g.spacing[0]);}
+function composeXY(g,p){const d=composeSub(p,g.origin);return [composeDot(d,g.row)/g.spacing[1],composeDot(d,g.col)/g.spacing[0]];}
+function composeCompatible(a,b){
+ if(!a||!b)return false;
+ if(['suppression','sequence','component','contrast','agent'].some(k=>a[k]!==b[k]))return false;
+ return [['te',.1],['tr',.2],['ti',.1]].every(([k,f])=>Number.isFinite(a[k])&&Number.isFinite(b[k])&&Math.abs(a[k]-b[k])<=Math.max(1,f*Math.min(a[k],b[k])));
+}
+function composePair(a,b){
+ const x=[],y=[],logs=[],stride=Math.max(1,Math.ceil(Math.sqrt(a.rows*a.cols/16000)));let overlap=0;
+ for(let iy=1;iy<a.rows-1;iy+=stride)for(let ix=1;ix<a.cols-1;ix+=stride){
+  const [bx,by]=composeXY(b.g,composePoint(a.g,ix,iy));if(bx<1||by<1||bx>b.cols-2||by>b.rows-2)continue;
+  overlap++;const av=a.data[iy*a.cols+ix],bv=composeSample(b,bx,by);
+  if(av>a.high*.10&&bv>b.high*.10){x.push(av);y.push(bv);logs.push(Math.log(av/bv));}
+ }
+ const coverage=overlap*stride*stride/Math.min(a.rows*a.cols,b.rows*b.cols);
+ if(coverage<.05||x.length<200)return null;
+ const mx=x.reduce((s,v)=>s+v,0)/x.length,my=y.reduce((s,v)=>s+v,0)/y.length;
+ let vx=0,vy=0,cov=0;for(let i=0;i<x.length;i++){const dx=x[i]-mx,dy=y[i]-my;vx+=dx*dx;vy+=dy*dy;cov+=dx*dy;}
+ if(Math.sqrt(vx/x.length)/mx<.08||Math.sqrt(vy/y.length)/my<.08)return null;
+ const corr=cov/Math.sqrt(vx*vy),ratio=composeMedian(logs),mad=composeMedian(logs.map(v=>Math.abs(v-ratio)));
+ if(!Number.isFinite(corr)||corr<.97||mad>.10||Math.abs(ratio)>Math.log(1.5))return null;
+ return {ratio:Math.exp(ratio),correlation:corr,samples:x.length,coverage};
+}
+async function composeImages(tiles,reference=0,yieldUI=async()=>{}){
+ if(tiles.length<2||tiles.length>8)throw Error('Select between 2 and 8 images.');
+ if(!Number.isInteger(reference)||!tiles[reference])throw Error('Choose a reference image.');
+ const anchor=tiles[reference],g=anchor.g;
+ for(const t of tiles){
+  if(!t.g||!g||t.g.ref!==g.ref||t.g.study!==g.study)throw Error('Images must share a DICOM study and frame of reference.');
+  if(t.invert!==anchor.invert)throw Error('Images must use the same DICOM photometric presentation.');
+  if(!composeCompatible(anchor.signature,t.signature))throw Error('Select matching magnitude-MRI sequences with compatible timing and fat suppression.');
+  if(Math.abs(composeDot(g.normal,t.g.normal))<.9999||Math.abs(composeDot(composeSub(t.g.origin,g.origin),g.normal))>.75)throw Error('Select corresponding slices in the same plane (within 0.75 mm).');
+  if(t.rows<16||t.cols<16||t.data.length!==t.rows*t.cols)throw Error('Unsupported image dimensions.');
+  if(t.data.some(v=>!Number.isFinite(v)||v<0))throw Error('Signed or non-finite images cannot be composed.');
+ }
+ const edges=[];for(let i=0;i<tiles.length;i++)for(let j=i+1;j<tiles.length;j++){const pair=composePair(tiles[i],tiles[j]);if(pair)edges.push({i,j,...pair});await yieldUI();}
+ const gains=new Map([[reference,1]]);
+ for(let pass=0;pass<tiles.length;pass++)for(const e of edges){if(gains.has(e.i)&&!gains.has(e.j))gains.set(e.j,gains.get(e.i)*e.ratio);else if(gains.has(e.j)&&!gains.has(e.i))gains.set(e.i,gains.get(e.j)/e.ratio);}
+ if(gains.size!==tiles.length)throw Error('Insufficient reliable overlap. Check slice selection and alignment; all selected images must connect through matching anatomy.');
+ if([...gains.values()].some(v=>v<2/3||v>1.5))throw Error('Brightness differences exceed the conservative matching range.');
+ if(edges.some(e=>Math.abs(Math.log(gains.get(e.j)/gains.get(e.i)/e.ratio))>.10))throw Error('Overlap estimates disagree. Composition was cancelled.');
+ // The output grid uses reference orientation and spacing. No invented resolution.
+ const corners=tiles.flatMap(t=>[[0,0],[t.cols-1,0],[0,t.rows-1],[t.cols-1,t.rows-1]].map(([x,y])=>composeXY(g,composePoint(t.g,x,y))));
+ const x0=Math.floor(Math.min(...corners.map(p=>p[0]))),y0=Math.floor(Math.min(...corners.map(p=>p[1])));
+ const cols=Math.ceil(Math.max(...corners.map(p=>p[0])))-x0+1,rows=Math.ceil(Math.max(...corners.map(p=>p[1])))-y0+1;
+ if(cols>8192||rows>8192||cols*rows>4194304)throw Error('Composition exceeds the 4-megapixel workspace limit. Use smaller source images.');
+ const outputG={...g,origin:composePoint(g,x0,y0)},raw=new Float32Array(cols*rows),matched=new Float32Array(cols*rows);let uncovered=0;
+ const transforms=tiles.map(t=>{const p=composeXY(t.g,outputG.origin),dx=composeXY(t.g,composePoint(outputG,1,0)),dy=composeXY(t.g,composePoint(outputG,0,1));return {p,dx:dx.map((v,k)=>v-p[k]),dy:dy.map((v,k)=>v-p[k])};});
+ for(let y=0;y<rows;y++){
+  for(let x=0;x<cols;x++){let total=0,r=0,m=0;
+   for(let j=0;j<tiles.length;j++){const t=tiles[j],tr=transforms[j],tx=tr.p[0]+x*tr.dx[0]+y*tr.dy[0],ty=tr.p[1]+x*tr.dx[1]+y*tr.dy[1];
+    const v=composeSample(t,tx,ty);if(v===null)continue;
+    // Feather in physical distance from station edges; gaps remain black.
+    const edge=Math.min((tx+1)*t.g.spacing[1],(t.cols-tx)*t.g.spacing[1],(ty+1)*t.g.spacing[0],(t.rows-ty)*t.g.spacing[0]);
+    const w=Math.max(.001,Math.min(1,edge/20));total+=w;r+=w*v;m+=w*v*gains.get(j);
+   }
+   const k=y*cols+x;if(total){raw[k]=r/total;matched[k]=m/total;}else uncovered++;
+  }
+  if(y%32===0)await yieldUI();
+ }
+ return {rows,cols,raw,matched,geometry:outputG,gains:[...tiles.map((_,i)=>gains.get(i))],edges,uncovered};
+}
+// COMPOSE_CORE_END
+
 function seriesKey(s){return s.memoryId||String(catalog.indexOf(s));}
 const displayMemory=new Map();let memoryTimer;
 try{if(P.studyKey){const entries=JSON.parse(sessionStorage.getItem('dicom-display-texture-v4-'+P.studyKey)||'[]');if(Array.isArray(entries))for(const [k,v] of entries)if(typeof k==='string'&&catalog.some(s=>seriesKey(s)===k)&&v&&typeof v==='object')displayMemory.set(k,v);}}catch(e){}
@@ -1276,7 +1349,7 @@ async function draw(i){
   if(i===hover){refreshOverlays();updateActiveSummary();}
   if(i===hover||!P.series.some((other,j)=>j!==i&&other===s&&!S[j].panel.hidden))rememberSeries(i);
   st.stat.textContent='Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+(geom(i)?' · Loc: '+s.pos[st.idx].toFixed(1)+'mm':' · Position unavailable')+' · W: '+Math.round(view.hi-view.lo)+' L: '+Math.round((view.hi+view.lo)/2)+
-    ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(view.wl==='balanced'&&!view.ctLike?' [BALANCED DISPLAY'+(s.presentation?.field?' · shading corrected':'')+']':'')+(st.holdOriginal?' [HOLD ORIGINAL · DICOM source]':view.ctLike?' [CT-like display · MRI source · experimental]':useEnh?' ['+s.processing.engine+' · '+(s.processing.frames[st.idx]||'processed')+']':(st.smooth||st.sharp?' [FILTERED SOURCE':' [SOURCE')+(s.processing?.reason?' · '+s.processing.reason:'')+']')+(!st.holdOriginal&&(st.smooth||st.sharp)?' · Smoothening '+st.smooth+' · Sharpening '+st.sharp:'');
+    ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(view.wl==='balanced'&&!view.ctLike?' [BALANCED DISPLAY'+(s.presentation?.field?' · shading corrected':'')+']':'')+(st.holdOriginal?(s.derivedComposite?' [UNBALANCED SOURCE COMPOSITE]':' [HOLD ORIGINAL · DICOM source]'):view.ctLike?' [CT-like display · MRI source · experimental]':useEnh?' ['+s.processing.engine+' · '+(s.processing.frames[st.idx]||'processed')+']':(st.smooth||st.sharp?' [FILTERED SOURCE':' [SOURCE')+(s.processing?.reason?' · '+s.processing.reason:'')+']')+(!st.holdOriginal&&(st.smooth||st.sharp)?' · Smoothening '+st.smooth+' · Sharpening '+st.sharp:'');
 }
 
 const drawAll=()=>{for(let i=0;i<N;i++)draw(i);};
@@ -1319,7 +1392,7 @@ async function roiStats(i,m,idx){
  const bins=new Array(64).fill(0),width=(mx-mn)/64;
  for(const v of values)bins[width?Math.min(63,Math.floor((v-mn)/width)):0]++;
  const peak=bins.indexOf(Math.max(...bins)),mode=width?mn+(peak+.5)*width:mn;
- m.txt='Original pixels\nMean: '+mean.toFixed(2)+' · SD: '+sd.toFixed(2)+'\nMedian: '+median.toFixed(2)+'\nMode (64 bins): '+mode.toFixed(2)+'\nMin/Max: '+mn.toFixed(2)+' / '+mx.toFixed(2)+'\nArea: '+(n*s.spacing[0]*s.spacing[1]).toFixed(2)+' mm²';draw(i);
+ m.txt=(s.derivedComposite?'Derived resampled composite':'Original pixels')+'\nMean: '+mean.toFixed(2)+' · SD: '+sd.toFixed(2)+'\nMedian: '+median.toFixed(2)+'\nMode (64 bins): '+mode.toFixed(2)+'\nMin/Max: '+mn.toFixed(2)+' / '+mx.toFixed(2)+'\nArea: '+(n*s.spacing[0]*s.spacing[1]).toFixed(2)+' mm²';draw(i);
 }
 
 const nearestMenu=$('div',{id:'nearest-image-menu',hidden:true,role:'menu',ariaLabel:'Image actions'});
@@ -1373,6 +1446,7 @@ const icons={
  reset:'<path d="M4 9a8 8 0 1 1 0 7M4 4v5h5"/>',
  mpr:'<path d="M4 4h16v16H4ZM12 4v16M4 12h16"/>',
  mip:'<path d="m3 8 9-5 9 5-9 5ZM3 12l9 5 9-5M3 16l9 5 9-5"/>',
+ stitch:'<path d="M11 2h3l1 2-1 2h-3l-1-2ZM10 7h4l1 2-1 1h-4L9 9ZM9 11h5l1 2-1 1H9l-1-1ZM10 15h5l1 2-1 1h-5l-1-1ZM11 19h4l1 2-3 2-3-2M5 2H3v8h2M19 14h2v8h-2"/><path d="M3 12h4M17 12h4" stroke-dasharray="1 2"/>',
  vr:'<path d="m4 7 8-4 8 4v10l-8 4-8-4ZM4 7l8 4 8-4M12 11v10"/>',
  roi:'<rect x="4" y="4" width="16" height="16" rx="1" stroke-dasharray="3 3"/><path d="M8 12h8M12 8v8"/>'};
 function toolButton(x){
@@ -1393,6 +1467,48 @@ groups.forEach(([name,items])=>{
 const fit=toolButton({t:'reset',l:'Fit / reset active viewport'});fit.onclick=()=>resetView(hover);toolG.append(fit);
 toolG.append($('div',{className:'rail-category',textContent:'3D'}));
 [{t:'mpr',l:'MPR'},{t:'mip',l:'MIP'},{t:'vr',l:'VR'}].forEach(x=>{const b=toolButton(x);b.disabled=true;b.title=x.l+' — volume reconstruction will be added in a later update';toolG.append(b);});
+const stitchButton=toolButton({t:'stitch',l:'Stitch'});stitchButton.title='Stitch / Compose overlapping anatomical images';toolG.append(stitchButton);
+const stitchDialog=$('dialog');stitchDialog.style.cssText='color:#d4deea;background:#101923;border:1px solid #2b3b4d;border-radius:8px;width:min(760px,94vw);max-height:90vh;padding:20px';document.body.append(stitchDialog);
+stitchButton.onclick=()=>{
+ stitchDialog.replaceChildren();let pending=null,busy=false;const selections=[];
+ const heading=$('h3',{textContent:'Stitch / Compose'}),help=$('p',{textContent:'Select 2–8 overlapping images from matching magnitude-MRI sequences, then choose corresponding slices. Any anatomical region or plane is supported when geometry and overlap agree. Patient-motion registration is not included.'});help.style.fontSize='12px';
+ const list=$('div'),status=$('p',{role:'status',ariaLive:'polite'}),preview=$('canvas');preview.style.cssText='display:none;max-width:100%;max-height:45vh;background:black';
+ const create=$('button',{textContent:'Create preview'}),add=$('button',{textContent:'Add composed image',disabled:true}),close=$('button',{textContent:'Close'});
+ const invalidate=()=>{pending=null;add.disabled=true;preview.style.display='none';};
+ catalog.forEach((s,index)=>{if(!s.stationSignature||s.derivedComposite||s.streamed||!s.geometry?.some(Boolean))return;
+  const line=$('div');line.style.cssText='display:flex;align-items:center;gap:8px;margin:8px 0';
+  const check=$('input',{type:'checkbox',ariaLabel:'Include '+s.title}),label=$('span',{textContent:s.title}),slice=$('input',{type:'number',min:'1',max:String(s.items.length),value:String((S.find((st,k)=>P.series[k]===s)?.idx??Math.floor(s.items.length/2))+1),ariaLabel:'Slice for '+s.title}),ref=$('input',{type:'radio',name:'compose-reference',ariaLabel:'Reference '+s.title});slice.style.width='65px';label.style.flex='1';
+  check.onchange=slice.onchange=ref.onchange=invalidate;line.append(check,label,$('span',{textContent:'Slice'}),slice,$('span',{textContent:'Ref'}),ref);list.append(line);selections.push({s,index,check,slice,ref});
+ });
+ const note=$('p',{textContent:'Creates a derived single image with feathered seams and conservative signal matching. Source series stay available. On the composition, Original means the unbalanced source composite; ROI values are derived, resampled values. Uncovered areas remain black.'});note.style.cssText='font-size:11px;color:#8ba1b5';
+ close.onclick=()=>{if(!busy)stitchDialog.close();};stitchDialog.oncancel=e=>{if(busy)e.preventDefault();};
+ create.onclick=async()=>{if(busy)return;invalidate();busy=true;create.disabled=true;list.inert=true;status.textContent='Checking physical overlap and composing…';
+  try{
+   const chosen=selections.filter(r=>r.check.checked);if(chosen.length<2||chosen.length>8)throw Error('Select 2–8 images.');
+   const reference=chosen.findIndex(r=>r.ref.checked);if(reference<0)throw Error('Choose a reference from the selected images.');
+   const tiles=[];for(const row of chosen){const s=row.s,k=Number(row.slice.value)-1;if(!Number.isInteger(k)||k<0||k>=s.items.length||!s.geometry[k])throw Error('Choose valid slices with supported DICOM geometry.');
+    const packed=await inflate(s.items[k].o),data=Float32Array.from(packed,u=>val(s,u)),sample=[];for(let i=0;i<data.length;i+=Math.max(1,Math.floor(data.length/16000)))sample.push(data[i]);sample.sort((a,b)=>a-b);
+    tiles.push({data,rows:s.rows,cols:s.cols,g:s.geometry[k],signature:s.stationSignature,invert:s.invert,high:sample[Math.floor(.99*(sample.length-1))],source:row.index,slice:k,title:s.title});
+   }
+   const result=await composeImages(tiles,reference,()=>new Promise(resolve=>setTimeout(resolve,0)));
+   const ref=chosen[reference].s,[lo,hi]=ref.wl.auto;preview.width=result.cols;preview.height=result.rows;const ctx=preview.getContext('2d'),im=ctx.createImageData(result.cols,result.rows);
+   for(let k=0;k<result.matched.length;k++){let v=255*Math.max(0,Math.min(1,(result.matched[k]-lo)/Math.max(1e-9,hi-lo)));if(ref.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);preview.style.display='block';
+   pending={result,tiles,ref};add.disabled=false;status.textContent='Preview ready · '+result.cols+' × '+result.rows+' · gains '+result.gains.map(v=>v.toFixed(3)+'×').join(', ')+' · Inspect seams before adding.';
+  }catch(e){status.textContent=e.message;}
+  finally{busy=false;create.disabled=false;list.inert=false;}
+ };
+ add.onclick=async()=>{if(!pending||busy)return;busy=true;add.disabled=true;create.disabled=true;list.inert=true;status.textContent='Adding composed image…';
+  try{const {result:r,tiles,ref}=pending;let max=1;for(let k=0;k<r.raw.length;k++)max=Math.max(max,r.raw[k],r.matched[k]);const scale=max/65535;
+   const encode=async arr=>{const u=Uint16Array.from(arr,v=>Math.max(0,Math.min(65535,Math.round(v/scale))));const bytes=new Uint8Array(await new Response(new Blob([u.buffer]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());let b='';for(let i=0;i<bytes.length;i+=32768)b+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(b);};
+   const o=await encode(r.raw),e=await encode(r.matched),item={...ref,title:'COMPOSED · '+tiles.length+' regions',sequence:'Derived composition · '+tiles.map(t=>t.title).join(' + '),rows:r.rows,cols:r.cols,spacing:r.geometry.spacing,geometry:[r.geometry],pos:[composeDot(r.geometry.origin,r.geometry.normal)],items:[{o,e}],off:0,scale,hasEnh:true,streamed:false,derivedComposite:true,stationSignature:null,stationOriginalWL:null,stationMatch:null,memoryId:'compose-'+Date.now(),presentation:{default:'auto',field:null,base:0},wl:{...ref.wl,auto:[...ref.wl.auto],full:[0,max]},processing:{engine:'Derived composition · feathered + signal matched',frames:['derived composite'],applied:1},provenance:tiles.map((t,i)=>({series:t.source,slice:t.slice,gain:r.gains[i]}))};
+   let size=JSON.stringify(item).length;for(const s of catalog)size+=JSON.stringify(s).length;if(size>96*1024*1024)throw Error('Composed image exceeds the viewer transport budget. Load fewer series.');
+   catalog.push(item);appendSeriesCard(item,catalog.length-1);S[hover].assign(catalog.length-1);filterSeries();stitchDialog.close();
+  }catch(e){status.textContent=e.message;add.disabled=false;}
+  finally{busy=false;create.disabled=false;list.inert=false;}
+ };
+ stitchDialog.append(heading,help,list,note,create,add,close,status,preview);stitchDialog.showModal();
+};
+
 const overlayControls=$('div',{className:'overlay-controls'});
 const overlayList=$('select',{id:'overlay-list',ariaLabel:'Measurement or annotation'});let overlaySignature='';
 function refreshOverlays(){if(!S[hover])return;const list=S[hover].meas[S[hover].idx]||[],signature=hover+':'+S[hover].idx+':'+list.map(m=>m.id+':'+(m.label||'')).join(',');if(signature===overlaySignature)return;overlaySignature=signature;const prev=overlayList.value;overlayList.replaceChildren($('option',{value:'',textContent:'Select overlay'}));list.forEach((m,k)=>overlayList.append($('option',{value:m.id,textContent:(k+1)+'. '+m.type+(m.label?' · '+m.label:'')})));if(list.some(m=>String(m.id)===prev))overlayList.value=prev;remove.hidden=!overlayList.value;const selected=list.find(m=>String(m.id)===overlayList.value);edit.hidden=!(selected&&['text','arrow'].includes(selected.type));}
@@ -1505,20 +1621,20 @@ P.series.forEach((item,i)=>{
   [['Contrast','ctContrast',.7,1.8,.05],['Edge emphasis','ctSharp',0,.5,.05]].forEach(([label,key,min,max,step])=>{const slider=$('input',{type:'range',min,max,step,value:st[key],ariaLabel:label});slider.oninput=()=>{st[key]=Number(slider.value);draw(i);};settings.append($('label',null,[document.createTextNode(label),slider]));});
   settings.style.cssText='font-size:10px;color:#91bdd4';
   st.togEnh=()=>bEnh.onclick();st.togInv=()=>bInv.onclick();st.togPlay=()=>bPlay.onclick();
-  pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,filters.smooth,filters.sharp,bRst,bPlay,settings]),cv,stat);
+  pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,filters.smooth,filters.sharp,bRst,bPlay,settings]),cv,stat);
   grid.append(pnl);
   const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
   st.clear=()=>{endOriginal(i,false);st.filterCache=null;stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover)updateActiveSummary();};
   st.displayConfig=()=>({smooth:st.smooth,sharp:st.sharp,wl:sel.value,inv:st.inv,enh:st.enh,ctLike:st.ctLike,ctContrast:st.ctContrast,ctSharp:st.ctSharp});
   st.applyDisplay=c=>{st.smooth=filterLevel(c.smooth);st.sharp=filterLevel(c.sharp);filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);sel.value=['balanced','auto','dicom','full'].includes(c.wl)&&s.wl[c.wl]?c.wl:'auto';preset(i,sel.value);st.inv=!!c.inv;st.enh=!!c.enh&&s.hasEnh;bInv.className=st.inv?'on':'';bEnh.className=st.enh?'on':'';if(c.ctLike&&s.modality==='MR'){st.ctContrast=Math.max(.7,Math.min(1.8,Number(c.ctContrast)||1.25));st.ctSharp=Math.max(0,Math.min(.5,Number(c.ctSharp)||0));settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;bCT.onclick();}draw(i);};
-  st.syncDisplayUI=()=>{sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
+  st.syncDisplayUI=()=>{bOriginal.title=s.derivedComposite?'Hold: unbalanced source composite, still resampled and feather-blended. Source acquisitions remain separate.':'Press and hold: original DICOM window, no viewer processing. Release to restore.';sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
   st.assign=(index)=>{
     if(P.series[i]===catalog[index]){activate(i);return;}
     endOriginal(i,false);stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
     st.tok++;s=catalog[index];P.series[i]=s;
     Object.assign(st,{idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null,matchPoint:null,ctLike:false,ctRestore:null,smooth:0,sharp:0,holdOriginal:false,filterCache:null});
     const restored=restoredState(index);if(restored)Object.assign(st,restored);
-    pnl.querySelector('.ttl').textContent=s.title+(s.hasEnh&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'');
+    pnl.querySelector('.ttl').textContent=s.title+(s.hasEnh&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'');
     sel.replaceChildren();['balanced','auto','dicom','full'].forEach(n=>{if(n!=='dicom'||s.wl.dicom)sel.append($('option',{value:n,textContent:n==='balanced'?'Balanced display':'W/L '+n}));});
     bEnh.title=s.processing?.engine||'Enhancement';bCT.disabled=s.modality!=='MR';bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;st.syncDisplayUI();activate(i);draw(i);
   };
@@ -1581,14 +1697,15 @@ P.series.forEach((item,i)=>{
   cv.addEventListener('dblclick',e=>{e.preventDefault();const saved=st.clickSnapshot;if(saved&&saved.idx===st.idx&&performance.now()-saved.at<650){st.meas[st.idx]=saved.meas;const m=saved.pending?saved.meas.find(m=>m.id===saved.pending.id):null;st.pendingAngle=m?{idx:saved.pending.idx,m,step:saved.pending.step}:null;}st.clickSnapshot=null;toggleViewport(i);});
 });
 
-catalog.forEach((s,index)=>{
+function appendSeriesCard(s,index){
  const thumb=$('canvas'),card=$('button',{className:'series-card'+(index===0?' active':''),title:s.title+' · drag into a viewport',ariaLabel:'Load '+s.title,draggable:true});
  card.append(thumb,$('span',{className:'name',textContent:s.title}),$('span',{className:'meta',textContent:s.plane+' · '+s.pos.length+' images'}));
  card.ondragstart=e=>{e.dataTransfer.setData('application/x-dicom-series',String(index));e.dataTransfer.effectAllowed='copy';};
  card.onclick=()=>S[hover].assign(index);rail.append(card);
  // Decode thumbnail independently from viewport assignment.
  (async()=>{const data=await inflate(s.items[Math.floor(s.pos.length/2)].o);thumb.width=s.cols;thumb.height=s.rows;const ctx=thumb.getContext('2d'),im=ctx.createImageData(s.cols,s.rows),[lo,hi]=s.wl.auto;for(let k=0;k<data.length;k++){let v=Math.max(0,Math.min(255,255*(val(s,data[k])-lo)/Math.max(1e-9,hi-lo)));if(s.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);})();
-});
+}
+catalog.forEach(appendSeriesCard);
 setLayout(2,2);
 let sidebarAttempts=0;function attachSidebar(){if(!connectStudySidebar()&&sidebarAttempts++<40)setTimeout(attachSidebar,100);}attachSidebar();
 const sidebarReconnect=setInterval(()=>{const doc=sidebarDocument();if(doc?.getElementById('study-series-search')!==sidebarSearch||doc?.getElementById('study-plane-filter')!==sidebarPlane)connectStudySidebar();},500);
