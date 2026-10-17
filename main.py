@@ -31,7 +31,7 @@ try:
 except ImportError:
     st = None
 
-APP_BUILD = "2026.10.17-stitch.2"
+APP_BUILD = "2026.10.17-tools.3"
 MAX_PANELS = 6
 WORKSPACE_PAYLOAD_BUDGET = 96 * 1024 * 1024
 
@@ -822,6 +822,25 @@ def match_station_payloads(payloads,selected,reference):
     return out,logs
 
 
+def clinical_display_windows(frames,ds):
+    """Linear, series-relative MRI display aids, never lesion or vessel detection."""
+    if not frames or str(getattr(ds,"Modality","")).upper()!="MR" or quantitative_series(ds):return {}
+    samples=[]
+    for k in np.unique(np.linspace(0,len(frames)-1,min(5,len(frames))).astype(int)):
+        a=np.asarray(frames[k]).ravel()
+        samples.append(a[::max(1,len(a)//4096)])
+    values=np.concatenate(samples);values=values[np.isfinite(values)]
+    if len(values)<100 or values.min()<0:return {}
+    high=float(np.percentile(values,99.8));tissue=values[values>high*.08]
+    if len(tissue)<100 or high<=0:return {}
+    q=np.percentile(tissue,[10,25,40,60,98,99.5,99.8])
+    result={"angio":[float(q[3]),float(q[6])],"vessels":[float(q[2]),float(q[5])]}
+    desc=str(getattr(ds,"SeriesDescription","")).upper()
+    bvalue=_first(getattr(ds,"DiffusionBValue",None),0) or 0
+    if bvalue>0 or re.search(r"DWI|DIFF|TRACE",desc):result["dwi"]=[float(q[0]),float(q[4])]
+    return {k:v for k,v in result.items() if v[1]>v[0]}
+
+
 def build_payload_series(s, enhance, params, progress=None, force_stream=False, enhance_requested=None):
     streamed = force_stream or cine_series(s) or payload_estimate(s, enhance) > 24*1024*1024
     if payload_estimate(s, False) > 2*1024*1024*1024:
@@ -929,7 +948,7 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
                 invert=str(getattr(a, "PhotometricInterpretation", "")).upper() == "MONOCHROME1",
                 pos=pos, hasEnh=bool(enh), processing=processing, streamed=streamed, snr=round(info["snr"], 1), sigma=info["sigma"],
                 presentation=dict(default="dicom" if dicom_wl else "auto", field=field, base=info["lo"]),
-                wl=dict(balanced=dicom_wl or [info["lo"], info["hi"]], auto=[info["lo"], info["hi"]], dicom=dicom_wl, full=[source_min, source_max]),
+                wl=dict(**clinical_display_windows(frames,a), balanced=dicom_wl or [info["lo"], info["hi"]], auto=[info["lo"], info["hi"]], dicom=dicom_wl, full=[source_min, source_max]),
                 **packed)
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -999,6 +1018,21 @@ html,body{height:100%;overflow:hidden}body{display:flex;flex-direction:column}
 .tool-pinned{display:flex;flex-direction:column;align-items:center;gap:2px;flex-shrink:0;width:100%;border-top:1px solid #26313f;padding-top:3px;background:#101720}
 #tool-rail .stitch-tool{height:43px;flex-direction:column;gap:2px;padding:3px}
 #tool-rail .stitch-tool span{display:block;font-size:9px;line-height:11px}
+
+body{font-size:13px}
+.st{font-size:12px}.ttl{font-size:13px}.rail-heading{font-size:11px}.series-card .name{font-size:12px}.series-card .meta{font-size:11px}
+#tool-rail .stitch-tool{height:30px;padding:7px}
+#tool-rail .stitch-tool span{display:none}
+.icon-action svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.icon-action{display:inline-flex;align-items:center;justify-content:center;min-width:29px;min-height:29px;padding:5px}
+.icon-select{position:relative;display:inline-flex;align-items:center;justify-content:center;width:31px;height:29px;flex-shrink:0;color:#b7c8da;background:#16212e;border:1px solid #2b3b4d;border-radius:4px}
+.icon-select select{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.icon-select:focus-within{outline:2px solid #63c5e7}
+
+.hd button svg,#bar button svg,.hd summary svg,#bar summary svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.hd button,#bar button{min-width:29px;min-height:29px;padding:5px}
+.hd summary,#bar summary{list-style:none;cursor:pointer}.hd summary::-webkit-details-marker,#bar summary::-webkit-details-marker{display:none}
+#tool-status,.rail-category{display:none}
 </style>
 
 <div id="bar">
@@ -1015,7 +1049,7 @@ const catalog=P.series;
 P.series=Array.from({length:16},(_,i)=>i<Math.min(4,catalog.length)?catalog[i]:null);
 const PH=__PANEL_H__, N=16;
 let layoutRows=2,layoutCols=2,expandedViewport=null,expandedLayout=null;
-const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null,ctLike:false,ctContrast:1.25,ctSharp:.25,ctRestore:null,smooth:0,sharp:0,holdOriginal:false,filterCache:null});});
+const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null,ctLike:false,ctContrast:1.25,ctSharp:.25,ctRestore:null,rotation:0,flipH:false,flipV:false,smooth:0,sharp:0,holdOriginal:false,filterCache:null});});
 const opt={sync:true,link:false,tool:'wl',overlays:true,refs:true,viewLink:false};
 // COMPOSE_CORE_START
 function composeDot(a,b){return a.reduce((s,v,k)=>s+v*b[k],0);}
@@ -1113,8 +1147,13 @@ async function getFrame(i,idx,enh){
 
 const val=(s,u)=>s.off+u*s.scale;
 
-function toScreen(st,x,y){const L=st.lay;return [L.ox+(x-L.w/2)*L.sc,L.oy+(y-L.h/2)*L.sc*L.asp];}
-function toImage(st,ex,ey){const L=st.lay;return [((ex*L.dpr)-L.ox)/L.sc+L.w/2,(((ey*L.dpr)-L.oy)/(L.sc*L.asp))+L.h/2];}
+// ORIENTATION_MATH_START
+function orientationCoefficients(st,sc,asp){const t=(st.rotation||0)*Math.PI/180,c=Math.cos(t),s=Math.sin(t),fx=st.flipH?-1:1,fy=st.flipV?-1:1;return {a:c*sc*fx,b:s*sc*fx,c:-s*sc*asp*fy,d:c*sc*asp*fy};}
+function orientationFit(st,w,h,asp,cw,ch){const t=(st.rotation||0)*Math.PI/180,c=Math.abs(Math.cos(t)),s=Math.abs(Math.sin(t));return Math.min(cw/(w*c+h*asp*s),ch/(w*s+h*asp*c))*.98;}
+function toScreen(st,x,y){const L=st.lay,dx=x-L.w/2,dy=y-L.h/2;return [L.ox+L.a*dx+L.c*dy,L.oy+L.b*dx+L.d*dy];}
+function toImage(st,ex,ey){const L=st.lay,x=ex*L.dpr-L.ox,y=ey*L.dpr-L.oy,det=L.a*L.d-L.b*L.c;return [(L.d*x-L.c*y)/det+L.w/2,(-L.b*x+L.a*y)/det+L.h/2];}
+// ORIENTATION_MATH_END
+
 function mm(s,m){const dx=(m.x2-m.x1)*s.spacing[1],dy=(m.y2-m.y1)*s.spacing[0];return Math.hypot(dx,dy);}
 
 // DICOM coordinates: x follows the first orientation vector, y the second.
@@ -1150,6 +1189,12 @@ function locatePoint(i,x,y){const source=geom(i);if(!source){readingNotice.textC
  readingNotice.textContent=count?'Located point in '+count+' compatible viewport(s).':'No compatible slice covers this point.';drawAll();
 }
 
+function pointer3D(i,x,y){const source=geom(i);if(!source){readingNotice.textContent='3D pointer unavailable: supported DICOM geometry is missing.';return;}
+ const point=patientPoint(source,x,y);clearTimeout(markerTimer);S.forEach(st=>st.matchPoint=null);let count=0;
+ for(let j=0;j<N;j++){if(!P.series[j]||S[j].panel.hidden||S[j].holdOriginal)continue;const k=j===i?S[i].idx:nearestSlice(P.series[j],source,point,false);if(k<0)continue;cancelAngle(j);S[j].idx=k;S[j].matchPoint={point,idx:k,expires:Infinity};count++;}
+ readingNotice.textContent='3D pointer · patient LPS: '+point.map(v=>v.toFixed(1)).join(', ')+' mm · '+count+' matched view(s)';drawAll();
+}
+
 function nearestOtherPlanes(i,source,point){
  let count=0;
  S.forEach(st=>st.matchPoint=null);if(geom(i)===source)markCorrespondence(i,point);
@@ -1179,7 +1224,7 @@ function refreshMagnifier(i){const st=S[i],s=P.series[i],pos=st.lensPos,lens=st.
  const size=Math.min(160,rc.width,rc.height),dpr=window.devicePixelRatio||1;
  lens.style.width=size+'px';lens.style.height=size+'px';lens.style.left=Math.max(rc.left,Math.min(pos.x+22,rc.right-size))+'px';lens.style.top=Math.max(rc.top,Math.min(pos.y-size/2,rc.bottom-size))+'px';
  lens.width=Math.round(size*dpr);lens.height=Math.round(size*dpr);const ctx=lens.getContext('2d');ctx.fillStyle='#000';ctx.fillRect(0,0,lens.width,lens.height);
- const scale=st.lay.sc*2.5;ctx.setTransform(scale,0,0,scale*st.lay.asp,lens.width/2-xy[0]*scale,lens.height/2-xy[1]*scale*st.lay.asp);ctx.imageSmoothingEnabled=false;ctx.drawImage(st.oc,0,0);ctx.setTransform(1,0,0,1,0,0);
+ const L=st.lay,a=L.a*2.5,b=L.b*2.5,c=L.c*2.5,d=L.d*2.5;ctx.setTransform(a,b,c,d,lens.width/2-xy[0]*a-xy[1]*c,lens.height/2-xy[0]*b-xy[1]*d);ctx.imageSmoothingEnabled=false;ctx.drawImage(st.oc,0,0);ctx.setTransform(1,0,0,1,0,0);
  ctx.fillStyle='#91dcf5';ctx.font=(10*dpr)+'px sans-serif';ctx.textAlign='center';ctx.shadowColor='#000';ctx.shadowBlur=3*dpr;ctx.fillText('2.5×',lens.width/2,lens.height-12*dpr);lens.hidden=false;
 }
 function stopMagnifier(i){const st=S[i];st.magnify=false;st.lensPos=null;if(st.lens)st.lens.hidden=true;}
@@ -1192,13 +1237,13 @@ function toggleViewport(i){if(!P.series[i])return;closeNearestMenu();S.forEach(s
  layout.textContent='Layout: 1 × 1 · expanded';activate(i);requestAnimationFrame(drawAll);
 }
 
-function viewScale(i){const s=P.series[i],st=S[i],dpr=window.devicePixelRatio||1,asp=s.spacing[0]/s.spacing[1];return Math.min(st.cv.clientWidth*dpr/s.cols,st.cv.clientHeight*dpr/(s.rows*asp))*.98*st.zoom;}
+function viewScale(i){const s=P.series[i],st=S[i],dpr=window.devicePixelRatio||1,asp=s.spacing[0]/s.spacing[1];return orientationFit(st,s.cols,s.rows,asp,st.cv.clientWidth*dpr,st.cv.clientHeight*dpr)*st.zoom;}
 function updateView(i,pan=false){const source=geom(i),st=S[i];if(opt.viewLink&&source){const sc=viewScale(i),dpr=window.devicePixelRatio||1,s=P.series[i];
- const center=patientPoint(source,s.cols/2-st.px*dpr/sc,s.rows/2-st.py*dpr/(sc*s.spacing[0]/s.spacing[1]));
+ const center=patientPoint(source,...toImage(st,st.cv.clientWidth/2,st.cv.clientHeight/2));
  for(let j=0;j<N;j++){const g=geom(j),sj=P.series[j],target=S[j];if(j===i||!sj||target.panel.hidden||!compatible(source,g))continue;
   if(pan&&Math.abs(dot(source.normal,g.normal))<.999)continue;
   const old=viewScale(j),base=old/target.zoom,desired=sc/source.spacing[1]*g.spacing[1];target.zoom=Math.max(.2,Math.min(20,desired/base));const next=viewScale(j);
-  if(pan){const xy=imagePoint(g,center);target.px=(sj.cols/2-xy[0])*next/dpr;target.py=(sj.rows/2-xy[1])*next*(sj.spacing[0]/sj.spacing[1])/dpr;}
+  if(pan){const xy=imagePoint(g,center);const m=orientationCoefficients(target,next,sj.spacing[0]/sj.spacing[1]),dx=xy[0]-sj.cols/2,dy=xy[1]-sj.rows/2;target.px=-(m.a*dx+m.c*dy)/dpr;target.py=-(m.b*dx+m.d*dy)/dpr;}
   else{target.px*=next/old;target.py*=next/old;}
   draw(j);
  }}draw(i);}
@@ -1208,7 +1253,7 @@ function rememberSeries(i){const series=P.series[i],st=S[i],k=catalog.indexOf(se
 }
 function restoredState(index){const s=catalog[index],r=displayMemory.get(seriesKey(s));if(!r)return null;
  if(!['idx','lo','hi','zoom','px','py'].every(k=>Number.isFinite(r[k]))||r.hi<=r.lo)return null;
- return {...r,smooth:filterLevel(r.smooth),sharp:filterLevel(r.sharp),holdOriginal:false,idx:Math.max(0,Math.min(s.pos.length-1,Math.round(r.idx))),zoom:Math.max(.2,Math.min(20,r.zoom)),enh:!!r.enh&&s.hasEnh,ctLike:!!r.ctLike&&s.modality==='MR'};
+ return {...r,rotation:Number.isFinite(r.rotation)?((r.rotation%360)+360)%360:0,flipH:!!r.flipH,flipV:!!r.flipV,smooth:filterLevel(r.smooth),sharp:filterLevel(r.sharp),holdOriginal:false,idx:Math.max(0,Math.min(s.pos.length-1,Math.round(r.idx))),zoom:Math.max(.2,Math.min(20,r.zoom)),enh:!!r.enh&&s.hasEnh,ctLike:!!r.ctLike&&s.modality==='MR'};
 }
 let sidebarSearch=null,sidebarPlane=null,filterQuery='',filterPlane='All';
 function sidebarDocument(){try{return window.parent.document;}catch(e){return null;}}
@@ -1328,11 +1373,11 @@ async function draw(i){
   const cv=st.cv,ctx=cv.getContext('2d'),dpr=window.devicePixelRatio||1,cw=cv.clientWidth,ch=cv.clientHeight;
   if(cv.width!==Math.round(cw*dpr)||cv.height!==Math.round(ch*dpr)){cv.width=Math.round(cw*dpr);cv.height=Math.round(ch*dpr);}
   ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle='#000';ctx.fillRect(0,0,cv.width,cv.height);
-  const asp=s.spacing[0]/s.spacing[1],fit=Math.min(cv.width/w,cv.height/(h*asp))*0.98,sc=fit*st.zoom;
-  st.lay={sc,asp,ox:cv.width/2+st.px*dpr,oy:cv.height/2+st.py*dpr,w,h,dpr};
-  ctx.setTransform(sc,0,0,sc*asp,st.lay.ox,st.lay.oy);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
+  const asp=s.spacing[0]/s.spacing[1],fit=orientationFit(st,w,h,asp,cv.width,cv.height),sc=fit*st.zoom;
+  st.lay={...orientationCoefficients(st,sc,asp),sc,asp,ox:cv.width/2+st.px*dpr,oy:cv.height/2+st.py*dpr,w,h,dpr};
+  ctx.setTransform(st.lay.a,st.lay.b,st.lay.c,st.lay.d,st.lay.ox,st.lay.oy);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
   ctx.drawImage(oc,-w/2,-h/2);
-  ctx.setTransform(1,0,0,1,0,0);ctx.lineWidth=Math.max(1,dpr*1.5);ctx.font=(11*dpr)+'px ui-monospace,monospace';ctx.shadowColor='#000';ctx.shadowBlur=3*dpr;
+  ctx.setTransform(1,0,0,1,0,0);ctx.lineWidth=Math.max(1,dpr*1.5);ctx.font=(12*dpr)+'px ui-monospace,monospace';ctx.shadowColor='#000';ctx.shadowBlur=3*dpr;
   if(opt.overlays)for(const m of (st.meas[st.idx]||[])){
     const [x1,y1]=toScreen(st,m.x1,m.y1),[x2,y2]=toScreen(st,m.x2,m.y2);
     ctx.strokeStyle=ctx.fillStyle=(m.type==='roi'||m.type==='ellipse')?'#fbbf24':'#34d399';
@@ -1355,7 +1400,7 @@ async function draw(i){
   ctx.shadowBlur=0;refreshMagnifier(i);
   if(i===hover){refreshOverlays();updateActiveSummary();}
   if(i===hover||!P.series.some((other,j)=>j!==i&&other===s&&!S[j].panel.hidden))rememberSeries(i);
-  st.stat.textContent='Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+(geom(i)?' · Loc: '+s.pos[st.idx].toFixed(1)+'mm':' · Position unavailable')+' · W: '+Math.round(view.hi-view.lo)+' L: '+Math.round((view.hi+view.lo)/2)+
+  st.stat.textContent='Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+(geom(i)?' · Loc: '+s.pos[st.idx].toFixed(1)+'mm':' · Position unavailable')+(st.rotation||st.flipH||st.flipV?' · '+Math.round(st.rotation||0)+'°'+(st.flipH?' FH':'')+(st.flipV?' FV':''):'')+' · W: '+Math.round(view.hi-view.lo)+' L: '+Math.round((view.hi+view.lo)/2)+
     ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(view.wl==='balanced'&&!view.ctLike?' [BALANCED DISPLAY'+(s.presentation?.field?' · shading corrected':'')+']':'')+(st.holdOriginal?(s.derivedComposite?' [UNBALANCED SOURCE COMPOSITE]':' [HOLD ORIGINAL · DICOM source]'):view.ctLike?' [CT-like display · MRI source · experimental]':useEnh?' ['+s.processing.engine+' · '+(s.processing.frames[st.idx]||'processed')+']':(st.smooth||st.sharp?' [FILTERED SOURCE':' [SOURCE')+(s.processing?.reason?' · '+s.processing.reason:'')+']')+(!st.holdOriginal&&(st.smooth||st.sharp)?' · Smoothening '+st.smooth+' · Sharpening '+st.sharp:'');
 }
 
@@ -1377,7 +1422,7 @@ function setIdx(i,v,fromSync){
   drawAll();
 }
 
-function resetView(i){const s=P.series[i],st=S[i];if(!s)return;st.zoom=1;st.px=st.py=0;st.wl=s.presentation?.default||'auto';const w=s.wl[st.wl];st.lo=w[0];st.hi=w[1];st.syncDisplayUI?.();updateView(i,true);}
+function resetView(i){const s=P.series[i],st=S[i];if(!s)return;st.zoom=1;st.matchPoint=null;st.rotation=0;st.flipH=st.flipV=false;st.px=st.py=0;st.wl=s.presentation?.default||'auto';const w=s.wl[st.wl];st.lo=w[0];st.hi=w[1];st.syncDisplayUI?.();updateView(i,true);}
 function preset(i,name){const s=P.series[i],st=S[i],w=s.wl[name]||s.wl.auto;st.wl=name;st.lo=w[0];st.hi=w[1];draw(i);}
 
 function angleDegrees(s,m){
@@ -1443,6 +1488,10 @@ bar.append(syncG);
 const icons={
  wl:'<circle cx="12" cy="12" r="8"/><path d="M12 4v16M12 4a8 8 0 0 1 0 16Z"/>',
  pan:'<path d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
+ pointer3d:'<path d="m4 7 8-4 8 4v10l-8 4-8-4ZM4 7l8 4 8-4M12 11v10M2 12h5M17 12h5"/>',
+ flipH:'<path d="M12 2v20M9 6 2 12l7 6ZM15 6l7 6-7 6Z"/>',
+ flipV:'<path d="M2 12h20M6 9l6-7 6 7ZM6 15l6 7 6-7Z"/>',
+ rotate:'<path d="M4 8a8 8 0 1 1 0 8M4 3v5h5"/>',
  locate:'<path d="M12 2v5M12 17v5M2 12h5M17 12h5"/><circle cx="12" cy="12" r="6"/>',
  zoom:'<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6M7 10h6M10 7v6"/>',
  dist:'<path d="m4 18 14-14 3 3L7 21ZM9 13l2 2M13 9l2 2"/>',
@@ -1456,19 +1505,21 @@ const icons={
  stitch:'<path d="M11 2h3l1 2-1 2h-3l-1-2ZM10 7h4l1 2-1 1h-4L9 9ZM9 11h5l1 2-1 1H9l-1-1ZM10 15h5l1 2-1 1h-5l-1-1ZM11 19h4l1 2-3 2-3-2M5 2H3v8h2M19 14h2v8h-2"/><path d="M3 12h4M17 12h4" stroke-dasharray="1 2"/>',
  vr:'<path d="m4 7 8-4 8 4v10l-8 4-8-4ZM4 7l8 4 8-4M12 11v10"/>',
  roi:'<rect x="4" y="4" width="16" height="16" rx="1" stroke-dasharray="3 3"/><path d="M8 12h8M12 8v8"/>'};
+const toolDescriptions={flipH:'Mirror the active image left to right without changing its source coordinates.',flipV:'Mirror the active image top to bottom without changing its source coordinates.',wl:'Drag horizontally for width, vertically for level.',pan:'Drag to move the image.',zoom:'Drag or use Ctrl + scroll to zoom.',locate:'Click anatomy to locate the matching physical point in compatible open views.',pointer3d:'Click or drag on anatomy to show persistent crosshairs and matching slices in compatible open views.',rotate:'Drag left or right to freely rotate the active 2D image.',dist:'Drag between two points to measure physical distance.',angle:'Click endpoint, vertex, endpoint to measure an angle.',roi:'Draw a rectangle to measure source signal statistics.',ellipse:'Draw an ellipse to measure source signal statistics.',arrow:'Draw an arrow annotation.',text:'Enter annotation text, then click an image.',reset:'Restore zoom, pan, orientation and the default image window.',mpr:'Multiplanar reconstruction is not yet available.',mip:'Maximum intensity projection is not yet available.',vr:'Volume rendering is not yet available.',stitch:'Compose compatible overlapping images into a derived blended image.'};
+
 function toolButton(x){
- const button=$('button',{className:'tool-button',title:x.l,ariaLabel:x.l});
- button.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true">'+icons[x.t]+'</svg><span>'+x.l+'</span>';
+ const button=$('button',{className:'tool-button',title:x.l+' — '+(toolDescriptions[x.t]||'Choose this image operation.'),ariaLabel:x.l});
+ button.dataset.tool=x.t;button.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true">'+icons[x.t]+'</svg>';
  return button;
 }
 const toolRail=document.getElementById('tool-rail'),toolG=$('div',{className:'tool-scroll'}),volumeTools=$('div',{className:'tool-pinned'});toolRail.append(toolG,volumeTools);
 const toolStatus=$('span',{id:'tool-status',textContent:'Window / level · drag to adjust'});bar.append(toolStatus);
 const annotationInput=$('input',{id:'annotation-text',type:'text',placeholder:'Annotation text',maxLength:160,ariaLabel:'Annotation text'});annotationInput.hidden=true;bar.append(annotationInput);
-const groups=[['VIEW',[{t:'wl',l:'Window / level'},{t:'pan',l:'Pan'},{t:'zoom',l:'Zoom'},{t:'locate',l:'Locate point'}]],['MEASURE',[{t:'dist',l:'Distance'},{t:'angle',l:'Angle'}]],['ROI',[{t:'roi',l:'Rectangle ROI'},{t:'ellipse',l:'Ellipse ROI'}]],['NOTES',[{t:'arrow',l:'Arrow annotation'},{t:'text',l:'Text annotation'}]]];
+const groups=[['VIEW',[{t:'wl',l:'Window / level'},{t:'pan',l:'Pan'},{t:'zoom',l:'Zoom'},{t:'locate',l:'Locate point'},{t:'pointer3d',l:'3D pointer'}]],['ORIENT',[{t:'rotate',l:'Rotate image'},{t:'flipH',l:'Flip horizontal'},{t:'flipV',l:'Flip vertical'}]],['MEASURE',[{t:'dist',l:'Distance'},{t:'angle',l:'Angle'}]],['ROI',[{t:'roi',l:'Rectangle ROI'},{t:'ellipse',l:'Ellipse ROI'}]],['NOTES',[{t:'arrow',l:'Arrow annotation'},{t:'text',l:'Text annotation'}]]];
 groups.forEach(([name,items])=>{
  toolG.append($('div',{className:'rail-category',textContent:name}));
  items.forEach(x=>{const button=toolButton(x);button.classList.toggle('on',x.t==='wl');button.setAttribute('aria-pressed',String(x.t==='wl'));
- button.onclick=()=>{S.forEach((_,i)=>cancelAngle(i));opt.tool=x.t;toolG.querySelectorAll('button').forEach(b=>{b.classList.remove('on');b.setAttribute('aria-pressed','false');});button.classList.add('on');button.setAttribute('aria-pressed','true');annotationInput.hidden=!['text','arrow'].includes(x.t);toolStatus.textContent=x.l+(x.t==='angle'?' · click endpoint, vertex, endpoint':x.t==='text'?' · enter text, then click image':' · drag on image');drawAll();};toolG.append(button);});
+ button.onclick=()=>{if(x.t==='flipH'||x.t==='flipV'){if(P.series[hover]){S[hover][x.t]=!S[hover][x.t];S[hover].syncDisplayUI();button.classList.toggle('on',S[hover][x.t]);button.setAttribute('aria-pressed',String(S[hover][x.t]));draw(hover);}return;}S.forEach((_,i)=>cancelAngle(i));opt.tool=x.t;toolG.querySelectorAll('button').forEach(b=>{b.classList.remove('on');b.setAttribute('aria-pressed','false');});button.classList.add('on');button.setAttribute('aria-pressed','true');annotationInput.hidden=!['text','arrow'].includes(x.t);toolStatus.textContent=x.l+(x.t==='angle'?' · click endpoint, vertex, endpoint':x.t==='text'?' · enter text, then click image':' · drag on image');drawAll();};toolG.append(button);});
  toolG.append($('div',{className:'rail-separator'}));
 });
 const fit=toolButton({t:'reset',l:'Fit / reset active viewport'});fit.onclick=()=>resetView(hover);toolG.append(fit);
@@ -1567,19 +1618,21 @@ saveReading.onclick=()=>{const name=layoutName.value.trim();if(!name){readingNot
 deleteReading.onclick=()=>{if(!readingSelect.value.startsWith('saved:'))return;const next={...savedLayouts};delete next[readingSelect.value.slice(6)];try{localStorage.setItem(layoutKey,JSON.stringify(next));savedLayouts=next;refreshLayouts();readingNotice.textContent='Saved layout deleted.';}catch(e){readingNotice.textContent='Browser storage unavailable.';}};
 reading.append(readingSelect,applyReading,layoutName,saveReading,deleteReading,readingNotice);
 
-const clr=$('button',{textContent:'Clear all overlays'});clr.onclick=()=>{S.forEach(st=>{st.meas={};st.pendingAngle=null;});drawAll();};bar.append(clr);
+const clr=$('button',{textContent:'Clear all overlays'});clr.onclick=()=>{S.forEach(st=>{st.meas={};st.pendingAngle=null;st.matchPoint=null;});clearTimeout(markerTimer);drawAll();};bar.append(clr);
 
 if(P.patient){bar.append($('div',{className:'pat-banner',textContent:P.patient}));}
 
 function chk(label,key,init){
   const c=$('input',{type:'checkbox',checked:init,ariaLabel:label});if(key==='viewLink')c.title='Physical zoom links compatible views; pan links compatible parallel views.';
   c.onchange=()=>{opt[key]=c.checked;if(key==='overlays'||key==='refs')drawAll();};
-  return $('label',null,[c,document.createTextNode(label)]);
+  const holder=$('label',{title:label+' — '+({sync:'Match slice position in compatible views.',refs:'Show intersection lines between open planes.',link:'Apply W/L drags to all visible images.',viewLink:'Link physical zoom and pan between compatible views.',overlays:'Show or hide annotations and measurements.'}[key]||'Toggle this display option.')});
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('width','17');svg.setAttribute('height','17');svg.setAttribute('fill','none');svg.setAttribute('stroke','currentColor');svg.setAttribute('aria-hidden','true');
+  svg.innerHTML=({sync:'<path d="M4 7h14l-3-3M20 17H6l3 3M18 7v4M6 17v-4"/>',refs:'<path d="M12 2v20M2 12h20"/>',link:'<circle cx="12" cy="12" r="8"/><path d="M12 4v16"/>',viewLink:'<path d="m3 9 5-5 5 5-5 5ZM11 15l5-5 5 5-5 5Z"/>',overlays:'<path d="M3 5h18v14H3ZM7 9h10M7 13h6"/>'}[key]);holder.append(c,svg);return holder;
 }
 
 const grid=document.getElementById('grid');
 const rail=document.getElementById('series-rail');
-function activate(i){const changed=hover!==i;hover=i;refreshOverlays();updateActiveSummary();if(changed)drawAll();document.querySelectorAll('.panel').forEach((p,j)=>p.classList.toggle('active-viewport',j===i));rail.querySelectorAll('.series-card').forEach((p,j)=>p.classList.toggle('active',catalog[j]===P.series[i]));}
+function activate(i){toolG.querySelectorAll('[data-tool]').forEach(b=>{const key=b.dataset.tool;if(key==='flipH'||key==='flipV'){b.classList.toggle('on',!!S[i][key]);b.setAttribute('aria-pressed',String(!!S[i][key]));}});const changed=hover!==i;hover=i;refreshOverlays();updateActiveSummary();if(changed)drawAll();document.querySelectorAll('.panel').forEach((p,j)=>p.classList.toggle('active-viewport',j===i));rail.querySelectorAll('.series-card').forEach((p,j)=>p.classList.toggle('active',catalog[j]===P.series[i]));}
 async function thumbnail(i,cv){const s=P.series[i],data=await getFrame(i,Math.floor(s.pos.length/2),false);cv.width=s.cols;cv.height=s.rows;const ctx=cv.getContext('2d'),im=ctx.createImageData(s.cols,s.rows),[lo,hi]=s.wl.auto;for(let k=0;k<data.length;k++){let v=Math.max(0,Math.min(255,255*(val(s,data[k])-lo)/Math.max(1e-9,hi-lo)));if(s.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);}
 P.series.forEach((item,i)=>{
   let s=item||catalog[0];
@@ -1588,15 +1641,15 @@ P.series.forEach((item,i)=>{
   st.lens=$('canvas',{className:'magnifier-lens',hidden:true});st.lens.style.cssText='position:fixed;z-index:1200;pointer-events:none;border:2px solid #63c5e7;border-radius:50%;background:#000;box-shadow:0 3px 16px #000a';document.body.append(st.lens);st.magnify=false;st.lensPos=null;
   st.cv=cv;st.stat=stat;st.panel=pnl;pnl.hidden=i>=4;
   
-  const sel=$('select');
-  ['balanced','auto','dicom','full'].forEach(n=>{
-    if(n!=='dicom'||s.wl.dicom)sel.append($('option',{value:n,textContent:{balanced:'Balanced display',auto:'W/L Auto',dicom:'W/L DICOM',full:'W/L Full'}[n]}));
+  const sel=$('select',{ariaLabel:'Window presets'});
+  ['balanced','auto','dicom','full','angio','dwi','vessels'].forEach(n=>{
+    if(s.wl[n])sel.append($('option',{value:n,textContent:{balanced:'Balanced display',auto:'W/L Auto',dicom:'W/L DICOM',full:'W/L Full',angio:'Angiography',dwi:'DWI · infarct review',vessels:'Vessels'}[n]}));
   });
   sel.value=st.wl;sel.title='Balanced: optional image-derived shading correction. Auto/DICOM/Full: linear display; DICOM is the default when available.';sel.onchange=()=>preset(i,sel.value);
   
   const bEnh=$('button',{textContent:'Enhance'}),bInv=$('button',{textContent:'Invert'}),bRst=$('button',{textContent:'Reset'}),bPlay=$('button',{textContent:'▶ Cine'});
   bEnh.className=st.enh?'on':'';bEnh.style.display=s.hasEnh?'':'none';
-  bEnh.title=s.processing?.engine||'Enhancement';bEnh.onclick=()=>{leaveCT();st.enh=!st.enh;bEnh.className=st.enh?'on':'';draw(i);};
+  bEnh.title='Enhancement — toggle the prepared image processing. '+(s.processing?.engine||'');bEnh.onclick=()=>{leaveCT();st.enh=!st.enh;bEnh.className=st.enh?'on':'';draw(i);};
   bInv.onclick=()=>{leaveCT();st.inv=!st.inv;bInv.className=st.inv?'on':'';draw(i);};bInv.className=st.inv?'on':'';
   bRst.onclick=()=>resetView(i);
   bPlay.onclick=()=>{
@@ -1613,6 +1666,12 @@ P.series.forEach((item,i)=>{
   bOriginal.onkeydown=e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();e.stopPropagation();if(!e.repeat)startOriginal();}};
   bOriginal.onkeyup=e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();e.stopPropagation();endOriginal(i);}};
   bOriginal.onblur=()=>endOriginal(i);bOriginal.onclick=e=>e.preventDefault();bOriginal.style.touchAction='none';
+  const orientationMenu=$('details'),orientationSummary=$('summary',{textContent:'Orientation'});orientationMenu.append(orientationSummary);
+  orientationMenu.title='Orientation — rotate any 2D image or flip its display. Source coordinates and measurements remain unchanged.';
+  const angleInput=$('input',{type:'number',min:'-360',max:'360',step:'1',value:'0',ariaLabel:'Rotation angle in degrees'});angleInput.style.width='65px';angleInput.title='Rotation angle — enter degrees clockwise';
+  angleInput.oninput=()=>{const angle=Number(angleInput.value);if(Number.isFinite(angle)){st.rotation=((angle%360)+360)%360;draw(i);}};
+  orientationMenu.append(angleInput);
+  [['Rotate left','↶',()=>st.rotation=((st.rotation||0)+270)%360],['Rotate right','↷',()=>st.rotation=((st.rotation||0)+90)%360],['Flip horizontal','↔',()=>st.flipH=!st.flipH],['Flip vertical','↕',()=>st.flipV=!st.flipV],['Reset orientation','⟲',()=>{st.rotation=0;st.flipH=st.flipV=false;}]].forEach(([name,symbol,action])=>{const b=$('button',{textContent:symbol,title:name+' — change display orientation only',ariaLabel:name});b.onclick=()=>{action();st.syncDisplayUI();draw(i);};orientationMenu.append(b);});
   const filters={};
   for(const [key,label] of [['smooth','Smoothening'],['sharp','Sharpening']]){
    const control=$('select',{title:label+(key==='smooth'?' · noise-adaptive smoothing; 1 subtle → 5 strongest':' · noise-gated fine detail; 1 subtle → 5 strongest')+' · source measurements unchanged',ariaLabel:label});
@@ -1628,22 +1687,22 @@ P.series.forEach((item,i)=>{
   [['Contrast','ctContrast',.7,1.8,.05],['Edge emphasis','ctSharp',0,.5,.05]].forEach(([label,key,min,max,step])=>{const slider=$('input',{type:'range',min,max,step,value:st[key],ariaLabel:label});slider.oninput=()=>{st[key]=Number(slider.value);draw(i);};settings.append($('label',null,[document.createTextNode(label),slider]));});
   settings.style.cssText='font-size:10px;color:#91bdd4';
   st.togEnh=()=>bEnh.onclick();st.togInv=()=>bInv.onclick();st.togPlay=()=>bPlay.onclick();
-  pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,filters.smooth,filters.sharp,bRst,bPlay,settings]),cv,stat);
+  pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,orientationMenu,filters.smooth,filters.sharp,bRst,bPlay,settings]),cv,stat);
   grid.append(pnl);
   const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
   st.clear=()=>{endOriginal(i,false);st.filterCache=null;stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover)updateActiveSummary();};
-  st.displayConfig=()=>({smooth:st.smooth,sharp:st.sharp,wl:sel.value,inv:st.inv,enh:st.enh,ctLike:st.ctLike,ctContrast:st.ctContrast,ctSharp:st.ctSharp});
-  st.applyDisplay=c=>{st.smooth=filterLevel(c.smooth);st.sharp=filterLevel(c.sharp);filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);sel.value=['balanced','auto','dicom','full'].includes(c.wl)&&s.wl[c.wl]?c.wl:'auto';preset(i,sel.value);st.inv=!!c.inv;st.enh=!!c.enh&&s.hasEnh;bInv.className=st.inv?'on':'';bEnh.className=st.enh?'on':'';if(c.ctLike&&s.modality==='MR'){st.ctContrast=Math.max(.7,Math.min(1.8,Number(c.ctContrast)||1.25));st.ctSharp=Math.max(0,Math.min(.5,Number(c.ctSharp)||0));settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;bCT.onclick();}draw(i);};
-  st.syncDisplayUI=()=>{bOriginal.title=s.derivedComposite?'Hold: unbalanced source composite, still resampled and feather-blended. Source acquisitions remain separate.':'Press and hold: original DICOM window, no viewer processing. Release to restore.';sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
+  st.displayConfig=()=>({rotation:st.rotation,flipH:st.flipH,flipV:st.flipV,smooth:st.smooth,sharp:st.sharp,wl:sel.value,inv:st.inv,enh:st.enh,ctLike:st.ctLike,ctContrast:st.ctContrast,ctSharp:st.ctSharp});
+  st.applyDisplay=c=>{st.rotation=Number.isFinite(c.rotation)?c.rotation:0;st.flipH=!!c.flipH;st.flipV=!!c.flipV;st.smooth=filterLevel(c.smooth);st.sharp=filterLevel(c.sharp);filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);sel.value=['balanced','auto','dicom','full','angio','dwi','vessels'].includes(c.wl)&&s.wl[c.wl]?c.wl:'auto';preset(i,sel.value);st.inv=!!c.inv;st.enh=!!c.enh&&s.hasEnh;bInv.className=st.inv?'on':'';bEnh.className=st.enh?'on':'';if(c.ctLike&&s.modality==='MR'){st.ctContrast=Math.max(.7,Math.min(1.8,Number(c.ctContrast)||1.25));st.ctSharp=Math.max(0,Math.min(.5,Number(c.ctSharp)||0));settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;bCT.onclick();}st.syncDisplayUI();draw(i);};
+  st.syncDisplayUI=()=>{angleInput.value=String(Math.round(st.rotation||0));bOriginal.title=s.derivedComposite?'Original — hold to view the unbalanced source composite, still resampled and blended.':'Original — hold to bypass processing at the source DICOM window. Release to restore.';sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
   st.assign=(index)=>{
     if(P.series[i]===catalog[index]){activate(i);return;}
     endOriginal(i,false);stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
     st.tok++;s=catalog[index];P.series[i]=s;
-    Object.assign(st,{idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null,matchPoint:null,ctLike:false,ctRestore:null,smooth:0,sharp:0,holdOriginal:false,filterCache:null});
+    Object.assign(st,{idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null,matchPoint:null,ctLike:false,ctRestore:null,rotation:0,flipH:false,flipV:false,smooth:0,sharp:0,holdOriginal:false,filterCache:null});
     const restored=restoredState(index);if(restored)Object.assign(st,restored);
     pnl.querySelector('.ttl').textContent=s.title+(s.hasEnh&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'');
-    sel.replaceChildren();['balanced','auto','dicom','full'].forEach(n=>{if(n!=='dicom'||s.wl.dicom)sel.append($('option',{value:n,textContent:n==='balanced'?'Balanced display':'W/L '+n}));});
-    bEnh.title=s.processing?.engine||'Enhancement';bCT.disabled=s.modality!=='MR';bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;st.syncDisplayUI();activate(i);draw(i);
+    sel.replaceChildren();['balanced','auto','dicom','full','angio','dwi','vessels'].forEach(n=>{if(s.wl[n])sel.append($('option',{value:n,textContent:({balanced:'Balanced display',angio:'Angiography',dwi:'DWI · infarct review',vessels:'Vessels'}[n]||'W/L '+n)}));});
+    bEnh.title='Enhancement — toggle the prepared image processing. '+(s.processing?.engine||'');bCT.disabled=s.modality!=='MR';bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;st.syncDisplayUI();activate(i);draw(i);
   };
   const initialIndex=catalog.indexOf(item),initial=initialIndex>=0?restoredState(initialIndex):null;if(initial){Object.assign(st,initial);st.syncDisplayUI();}
   pnl.ondragover=e=>{if(e.dataTransfer.types.includes('application/x-dicom-series')){e.preventDefault();e.dataTransfer.dropEffect='copy';pnl.classList.add('drop-target');}};
@@ -1669,9 +1728,9 @@ P.series.forEach((item,i)=>{
     const tool=e.button===1?'pan':(e.shiftKey?'dist':opt.tool);
     drag={tool,x:e.clientX,y:e.clientY};
     if(!st.lay){drag=null;return;}
-    if(tool==='locate'){
+    if(tool==='locate'||tool==='pointer3d'){
       const rc=cv.getBoundingClientRect(),[x,y]=toImage(st,e.clientX-rc.left,e.clientY-rc.top);
-      if(x>=0&&y>=0&&x<s.cols&&y<s.rows)locatePoint(i,x,y);drag=null;e.preventDefault();return;
+      if(x>=0&&y>=0&&x<s.cols&&y<s.rows)(tool==='pointer3d'?pointer3D:locatePoint)(i,x,y);if(tool==='locate')drag=null;e.preventDefault();return;
     }
     if(['dist','roi','ellipse','arrow','text','angle'].includes(tool)){
       const rc=cv.getBoundingClientRect();let [x,y]=toImage(st,e.clientX-rc.left,e.clientY-rc.top);
@@ -1690,6 +1749,8 @@ P.series.forEach((item,i)=>{
   cv.addEventListener('pointermove',e=>{
     if(st.magnify&&nearestMenu.hidden){st.lensPos={x:e.clientX,y:e.clientY};refreshMagnifier(i);}
     if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;
+    if(drag.tool==='rotate'){st.rotation=((st.rotation||0)+dx*.5+360)%360;st.syncDisplayUI();draw(i);return;}
+    if(drag.tool==='pointer3d'){const rc=cv.getBoundingClientRect(),[x,y]=toImage(st,e.clientX-rc.left,e.clientY-rc.top);if(x>=0&&y>=0&&x<s.cols&&y<s.rows)pointer3D(i,x,y);return;}
     if(drag.tool==='wl'){
       const targets=opt.link?[...Array(N).keys()].filter(j=>P.series[j]&&!S[j].panel.hidden):[i];
       targets.forEach(j=>{const sj=P.series[j],stj=S[j],r0=Math.max(1e-9,sj.wl.auto[1]-sj.wl.auto[0])/300;
@@ -1729,6 +1790,46 @@ window.addEventListener('keydown',e=>{
   else if(k==='arrowdown'||k==='arrowright'){setIdx(hover,st.idx+1);e.preventDefault();}
   else if(k==='arrowup'||k==='arrowleft'){setIdx(hover,st.idx-1);e.preventDefault();}
 });
+// Toolbar names remain available to assistive technology and in hover/focus tooltips.
+const actionPaths={window:'<circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/>',enhance:'<path d="m12 2 2 7 7 3-7 2-2 8-2-8-7-2 7-3Z"/>',invert:'<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor"/>',original:'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',rotate:icons.rotate,rotateLeft:'<path d="M20 8A8 8 0 1 0 20 16M20 3v5h-5"/>',rotateRight:icons.rotate,reset:icons.reset,layout:'<rect x="3" y="3" width="18" height="18"/><path d="M3 12h18M12 3v18"/>',play:'<path d="m7 3 14 9L7 21Z"/>',save:'<path d="M4 3h14l3 3v15H3V3ZM7 3v6h10V3M7 21v-8h10v8"/>',delete:'<path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 9v8M14 9v8"/>',apply:'<path d="m4 12 5 5L21 5"/>',edit:'<path d="m4 16 12-12 4 4L8 20H4Z"/>',smooth:'<path d="M2 15c4 0 4-10 8-10s4 14 8 14 4-10 4-10"/>',sharp:'<path d="m3 19 9-15 9 15M6 15h12"/>',ct:'<path d="M8 7C2 0 0 8 5 10l9 9c2 6 11 1 5-3L10 7C15 0 5-1 8 7Z"/>',flipH:'<path d="M12 2v20M9 6 2 12l7 6ZM15 6l7 6-7 6Z"/>',flipV:'<path d="M2 12h20M6 9l6-7 6 7ZM6 15l6 7 6-7Z"/>'};
+function actionInfo(name){const n=name.toLowerCase();
+ if(n.includes('flip horizontal'))return ['flipH','Flip horizontal','Mirror the displayed image left to right.'];
+ if(n.includes('flip vertical'))return ['flipV','Flip vertical','Mirror the displayed image top to bottom.'];
+ if(n.includes('rotate left'))return ['rotateLeft','Rotate left','Rotate 90 degrees counterclockwise.'];
+ if(n.includes('rotate right'))return ['rotateRight','Rotate right','Rotate 90 degrees clockwise.'];
+ if(n.includes('reset orientation'))return ['reset','Reset orientation','Restore the original rotation and remove display flips.'];
+ if(n.includes('orientation'))return ['rotate',name.includes('Reset')?'Reset orientation':'Orientation','Enter a rotation angle, rotate by 90 degrees, or flip the 2D image.'];
+ if(n.includes('original'))return ['original','Original','Hold to bypass image processing at the source window; release to restore.'];
+ if(n.includes('invert'))return ['invert','Invert','Reverse displayed grayscale without changing source pixels.'];
+ if(n.includes('enhance'))return ['enhance','Enhancement','Toggle the prepared enhancement for this series.'];
+ if(n.includes('ct-like'))return ['ct','CT-like display','Experimental inverted MRI display with bounded edge emphasis.'];
+ if(n.includes('cine'))return ['play','Cine','Start or pause playback through this series.'];
+ if(n.includes('reset'))return ['reset','Reset viewport','Restore image fit, orientation and the default window.'];
+ if(n.includes('clear'))return ['delete','Clear overlays','Remove measurement and annotation overlays.'];
+ if(n.includes('delete')||n.includes('remove'))return ['delete',name,'Remove the selected saved item or overlay.'];
+ if(n.includes('save'))return ['save',name,'Save the current reading layout in this browser.'];
+ if(n.includes('edit'))return ['edit',name,'Edit the selected annotation.'];
+ if(n.includes('apply'))return ['apply',name,'Apply the selected reading layout.'];
+ if(n.includes('layout'))return ['layout',name,'Choose viewport rows and columns or a saved reading arrangement.'];
+ return ['window',name,'Open this image control.'];
+}
+function makeToolbarIcons(){
+ document.querySelectorAll('#bar button,#bar summary,.hd button,.hd summary').forEach(el=>{
+  if(el.querySelector('svg'))return;const text=el.textContent.trim();if(!text)return;
+  const original=el.getAttribute('aria-label')||text,info=actionInfo(original),extra=el.title;
+  el.setAttribute('aria-label',info[1]);el.title=info[1]+' — '+info[2]+(extra?' '+extra:'');el.classList.add('icon-action');el.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true">'+actionPaths[info[0]]+'</svg>';
+ });
+ document.querySelectorAll('#bar select,.hd select').forEach(el=>{
+  if(el.parentElement.classList.contains('icon-select')){el._updateIconTitle?.();return;}
+  const smooth=el.getAttribute('aria-label')==='Smoothening',sharp=el.getAttribute('aria-label')==='Sharpening',wl=el.getAttribute('aria-label')==='Window presets',name=smooth?'Smoothening':sharp?'Sharpening':wl?'Window presets':el.getAttribute('aria-label')||'Choose option';
+  const wrap=$('span',{className:'icon-select'});wrap.innerHTML='<span class="icon-action" aria-hidden="true"><svg viewBox="0 0 24 24">'+actionPaths[smooth?'smooth':sharp?'sharp':'window']+'</svg></span>';
+  const update=()=>{wrap.title=name+' — '+(wl?'Linear display windows. Angiography and Vessels emphasize bright signal; DWI is a display aid and requires ADC correlation.':'Choose the desired setting.')+' Current: '+(el.selectedOptions[0]?.textContent||'');el.title=wrap.title;};
+  el.parentElement.insertBefore(wrap,el);wrap.append(el);el._updateIconTitle=update;el.addEventListener('change',update);update();
+ });
+}
+makeToolbarIcons();
+const iconObserver=new MutationObserver(makeToolbarIcons);iconObserver.observe(bar,{childList:true,subtree:true});iconObserver.observe(grid,{childList:true,subtree:true});
+
 window.addEventListener('resize',drawAll);
 drawAll();
 </script>
@@ -1749,8 +1850,13 @@ def build_empty_workspace():
         title = "Ready for your next study" if i == 0 else "Viewport available"
         hint = "Open a DICOM ZIP from the study browser" if i == 0 else "Selected series will appear here"
         cells += f'<div class="panel"><div class="empty-canvas"><div class="corner">VIEWPORT {i+1:02d} / NO SERIES</div><div class="center">{icon}<b>{title}</b>{hint}</div><div class="bottom">W — &nbsp; L — &nbsp; / &nbsp; IMAGE —</div></div></div>'
-    spine_icon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 2h3l1 2-1 2h-3l-1-2ZM10 7h4l1 2-1 1h-4L9 9ZM9 11h5l1 2-1 1H9l-1-1ZM10 15h5l1 2-1 1h-5l-1-1ZM11 19h4l1 2-3 2-3-2M5 2H3v8h2M19 14h2v8h-2"/></svg>'
-    tool_rail = '<nav id="tool-rail" aria-label="Image tools"><div class="tool-scroll">' + ''.join(f'<button class="tool-button" disabled title="{name}: load a study first" aria-label="{name}">{symbol}</button>' for name, symbol in [('Window / level','◐'),('Pan','✥'),('Zoom','⊕'),('Distance','╱'),('Angle','∠'),('Rectangle ROI','□'),('Ellipse ROI','◯'),('Arrow annotation','↗'),('Text annotation','T')]) + '</div><div class="tool-pinned">' + ''.join(f'<button class="tool-button" disabled title="{name}: load a study first">{name}</button>' for name in ['MPR','MIP','VR']) + '<button class="tool-button stitch-tool" disabled title="Stitch / Compose: load a study first" aria-label="Stitch / Compose">' + spine_icon + '<span>Stitch</span></button></div></nav>'
+    icon_section = VIEWER_HTML.split("const icons={",1)[1].split("};",1)[0]
+    paths = dict(re.findall(r"(\w+):'([^']*)'",icon_section))
+    def placeholder(name,key):
+        svg='<svg viewBox="0 0 24 24" aria-hidden="true">'+paths.get(key,"")+'</svg>'
+        return f'<button class="tool-button" disabled title="{name} — load a study to use this tool" aria-label="{name}">{svg}</button>'
+    tool_rail='<nav id="tool-rail" aria-label="Image tools"><div class="tool-scroll">'+''.join(placeholder(name,key) for name,key in [("Window / level","wl"),("Pan","pan"),("Zoom","zoom"),("3D pointer","pointer3d"),("Rotate image","rotate"),("Flip horizontal","flipH"),("Flip vertical","flipV"),("Distance","dist"),("Angle","angle"),("Rectangle ROI","roi"),("Ellipse ROI","ellipse"),("Arrow annotation","arrow"),("Text annotation","text")])+'</div><div class="tool-pinned">'+''.join(placeholder(name,key) for name,key in [("MPR","mpr"),("MIP","mip"),("VR","vr"),("Stitch / Compose","stitch")])+'</div></nav>'
+
     fit_script = '<script>' + VIEWER_HTML.split('<script>')[1].split('const P=')[0] + '</script>'
     return theme + tools + '<div class="workspace">' + rail + tool_rail + '<div id="grid">' + cells + '</div></div><div class="workspace-footer"><span>No image data loaded</span><span>Window / level · Measurements · Linked scrolling · Cine</span></div>' + fit_script
 
