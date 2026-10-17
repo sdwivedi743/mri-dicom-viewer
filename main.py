@@ -31,7 +31,7 @@ try:
 except ImportError:
     st = None
 
-APP_BUILD = "2026.10.17-reference-A.10"
+APP_BUILD = "2026.10.17-performance.11"
 MAX_PANELS = 6
 WORKSPACE_PAYLOAD_BUDGET = 96 * 1024 * 1024
 
@@ -1202,7 +1202,7 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
 # ----------------------------------------------------------------------------------------------------------------
 #  Diagnostic Interface Engine (Dark-Mode Workspace Layer)
 # ----------------------------------------------------------------------------------------------------------------
-WORKSTATION_HEADER_HTML = r"""<header id="workstation-header" data-viewer-build="2026.10.17-reference-A.10"><button class="workstation-brand" data-open-workflow title="SD-DCM · Build A10 — open study and processing settings"><svg viewBox="0 0 36 36" aria-hidden="true"><path d="M18 6c-7-6-17 3-12 10-6 7 2 15 9 11 4 7 14 3 12-5 8-4 4-15-3-15-1-3-4-4-6-1ZM18 6v23M8 12l19 10M8 23l16-12"/></svg><span>SD-DCM</span></button><button id="header-study" data-open-workflow title="Open study settings">Study <span>⌄</span></button><div id="header-study-meta">MRI · Image review</div><div class="header-layouts"><button id="header-layout-picker" title="Viewport layout — choose one to four rows and columns" aria-label="Choose custom viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM12 3v18M3 12h18"/></svg></button><button data-layout="2,2" title="2 × 2 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM12 3v18M3 12h18"/></svg><span>2x2</span></button><button data-layout="1,1" title="1 × 1 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3Z"/></svg><span>1x1</span></button><button data-layout="3,3" title="3 × 3 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM9 3v18M15 3v18M3 9h18M3 15h18"/></svg><span>3x3</span></button></div><details id="workspace-more"><summary aria-label="All viewer tools" title="All viewer tools — measurements, orientation, linking, layout and annotations">•••</summary><div id="bar"><div class="brand-tag">IMAGE TOOLS</div></div></details></header>"""
+WORKSTATION_HEADER_HTML = r"""<header id="workstation-header" data-viewer-build="2026.10.17-performance.11"><button class="workstation-brand" data-open-workflow title="SD-DCM · Build P11 — open study and processing settings"><svg viewBox="0 0 36 36" aria-hidden="true"><path d="M18 6c-7-6-17 3-12 10-6 7 2 15 9 11 4 7 14 3 12-5 8-4 4-15-3-15-1-3-4-4-6-1ZM18 6v23M8 12l19 10M8 23l16-12"/></svg><span>SD-DCM</span></button><button id="header-study" data-open-workflow title="Open study settings">Study <span>⌄</span></button><div id="header-study-meta">MRI · Image review</div><div class="header-layouts"><button id="header-layout-picker" title="Viewport layout — choose one to four rows and columns" aria-label="Choose custom viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM12 3v18M3 12h18"/></svg></button><button data-layout="2,2" title="2 × 2 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM12 3v18M3 12h18"/></svg><span>2x2</span></button><button data-layout="1,1" title="1 × 1 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3Z"/></svg><span>1x1</span></button><button data-layout="3,3" title="3 × 3 viewport layout"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3ZM9 3v18M15 3v18M3 9h18M3 15h18"/></svg><span>3x3</span></button></div><details id="workspace-more"><summary aria-label="All viewer tools" title="All viewer tools — measurements, orientation, linking, layout and annotations">•••</summary><div id="bar"><div class="brand-tag">IMAGE TOOLS</div></div></details></header>"""
 INSPECTOR_HTML = r"""<aside id="inspector" aria-label="Active viewport settings"><div class="inspector-heading">Reconstruction <span>⌃</span></div><div id="inspector-title">No active series</div><section id="reconstruction-controls" hidden aria-label="Live reconstruction controls"></section><div id="inspector-controls" class="hd inspector-actions"></div><div id="inspector-empty" class="inspector-empty">Open a study to begin.<br>Select any viewport to access its display and review controls.</div><div class="inspector-help">Hover over an icon for its name and function.<br>Hold the eye icon to compare with Original.<br>Double-click an image to expand or restore its layout.</div><button class="inspector-settings" data-open-workflow title="Study &amp; processing settings — open upload, enhancement, Signal Balance, station matching and diffusion review" aria-label="Study and processing settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 3v8M16 13v8"/></svg></button></aside>"""
 
 VIEWER_HTML = r"""
@@ -1400,7 +1400,7 @@ function openStudySettings(){try{const doc=window.parent.document,side=doc.query
  }catch(e){}const info=document.getElementById('inspector-title');if(info)info.textContent='Use the sidebar arrow at the top to open study settings.';}
 document.querySelectorAll('[data-open-workflow]').forEach(b=>b.addEventListener('click',openStudySettings));
 const P=__PAYLOAD__;
-document.documentElement.dataset.viewerBuild=P.viewerBuild;document.title='SD-DCM · A10';
+document.documentElement.dataset.viewerBuild=P.viewerBuild;document.title='SD-DCM · P11';
 const catalog=P.series;
 P.series=Array.from({length:16},(_,i)=>i<Math.min(4,catalog.length)?catalog[i]:null);
 const PH=__PANEL_H__, N=16;
@@ -1411,7 +1411,7 @@ let layoutRows=2,layoutCols=2,expandedViewport=null,expandedLayout=null;
 const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null,ctLike:false,ctContrast:1.25,ctSharp:.25,ctRestore:null,candidateOverlay:s.restrictedCandidates?.status==='processed',rotation:0,flipH:false,flipV:false,smooth:0,sharp:0,holdOriginal:false,filterCache:null});});
 const opt={sync:true,link:false,tool:'wl',overlays:true,refs:true,viewLink:false};
 // RECONSTRUCTION_CORE_START
-const RECON_MAX_BYTES=256*1024*1024,reconVolumes=new Map(),reconLoading=new Map();let reconQueue=Promise.resolve();
+const RECON_MAX_BYTES=256*1024*1024,reconVolumes=new Map(),reconLoading=new Map();
 const rDot=(a,b)=>a.reduce((s,v,k)=>s+v*b[k],0),rSub=(a,b)=>a.map((v,k)=>v-b[k]);
 function rCross(a,b){return [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];}
 function volumeGeometry(s){
@@ -1468,36 +1468,26 @@ async function buildReconstructionVolume(source,index,progress=()=>{}){
  const job=(async()=>{
   const v=volumeGeometry(source);
   // Drop only volumes no longer referenced by a reconstruction. Never invalidate live views.
-  for(const [id,cached] of reconVolumes)if(!catalog.some(s=>s.reconstruction?.volume===cached))reconVolumes.delete(id);
+  for(const [id,cached] of reconVolumes)if(!catalog.some(s=>s.reconstruction?.volume===cached)){reconVolumes.delete(id);pixelEngine.forget(id);}
   const used=[...reconVolumes.values()].reduce((n,a)=>n+a.data.byteLength,0);
   if(used+v.bytes>RECON_MAX_BYTES)throw Error('The reconstruction working-memory budget is in use by other source volumes. Existing images remain available.');
-  v.data=new Uint16Array(v.rows*v.cols*v.depth);v.source=index;
+  v.data=new Uint16Array(v.rows*v.cols*v.depth);v.source=index;v.workerKey=key;
   for(let k=0;k<v.depth;k++){const a=await inflate(source.items[v.order[k]].o);if(a.length!==v.rows*v.cols)throw Error('Decoded frame dimensions do not match the source stack.');v.data.set(a,k*v.rows*v.cols);progress((k+1)/v.depth);}
   reconVolumes.set(key,v);return v;
  })();reconLoading.set(key,job);try{return await job;}finally{reconLoading.delete(key);}
 }
 
 async function reconstructionPixels(s,k,enh,cancelled=()=>false){
- const r=s.reconstruction,v=r.volume,mode=enh?r.mode:'MPR',key=k+':'+mode+':'+(enh&&r.preview?'preview':'full');
- if(r.cache.has(key))return r.cache.get(key);
- const work=async()=>{
+ const r=s.reconstruction,v=r.volume,mode=enh?r.mode:'MPR',preview=!!(enh&&r.preview),key=k+':'+mode+':'+(preview?'preview':'full');
+ if(cancelled())return null;if(r.cache.has(key))return r.cache.get(key);
+ let out;const spec={spacing:r.spacing,normal:r.normal,slab:r.slab,samples:r.samples};
+ if(await pixelEngine.ensure(v)){
   if(cancelled())return null;
-  const g=s.geometry[k],out=new Uint16Array(s.rows*s.cols),start=rVoxel(v,g.origin),px=rVoxel(v,g.origin.map((q,i)=>q+g.row[i]*r.spacing)),py=rVoxel(v,g.origin.map((q,i)=>q+g.col[i]*r.spacing));
-  const dx=px.map((q,i)=>q-start[i]),dy=py.map((q,i)=>q-start[i]),n=[rDot(r.normal,v.row)/v.spacing[1],rDot(r.normal,v.col)/v.spacing[0],rDot(r.normal,v.normal)/v.spacing[2]],samples=mode==='MPR'?1:(r.preview?Math.min(17,r.samples):r.samples),stride=enh&&r.preview?2:1;
-  for(let y=0;y<s.rows;y+=stride){
-   for(let x=0;x<s.cols;x+=stride){const vx=start[0]+x*dx[0]+y*dy[0],vy=start[1]+x*dx[1]+y*dy[1],vz=start[2]+x*dx[2]+y*dy[2];let total=0,count=0,result=mode==='MinIP'?Infinity:-Infinity;
-    for(let z=0;z<samples;z++){const offset=samples===1?0:(z/(samples-1)-.5)*r.slab,value=rSample(v,vx+n[0]*offset,vy+n[1]*offset,vz+n[2]*offset);if(value===null)continue;
-     total+=value;count++;if(mode==='MinIP')result=Math.min(result,value);else result=Math.max(result,value);
-    }
-    const pixel=count?Math.round(mode==='Average'?total/count:result):0;
-    for(let yy=y;yy<Math.min(s.rows,y+stride);yy++)for(let xx=x;xx<Math.min(s.cols,x+stride);xx++)out[yy*s.cols+xx]=pixel;
-   }
-   if(y%8===0){await new Promise(resolve=>setTimeout(resolve,0));if(cancelled())return null;}
-  }
-  r.cache.set(key,out);if(r.cache.size>2)r.cache.delete(r.cache.keys().next().value);return out;
- };
- const job=reconQueue.then(work);reconQueue=job.catch(()=>{});return job;
+  out=await pixelEngine.run({type:'recon',key:v.workerKey,r:spec,g:s.geometry[k],w:s.cols,h:s.rows,mode,preview},cancelled.channel||'',cancelled.priority||0);
+ }else out=await resamplePlane(v,spec,s.geometry[k],s.cols,s.rows,mode,preview,cancelled);
+ if(!out||cancelled())return null;r.cache.set(key,out);if(r.cache.size>8)r.cache.delete(r.cache.keys().next().value);return out;
 }
+
 function makeReconstructionSeries(source,v,options){
  const spec=reconstructionSpec(v,options),geometry=Array.from({length:spec.count},(_,k)=>reconstructionGeometry(v,spec,k)),r={...spec,source:v.source};
  Object.defineProperty(r,'volume',{value:v,enumerable:false});Object.defineProperty(r,'cache',{value:new Map(),enumerable:false});
@@ -1587,18 +1577,21 @@ let hover=0;
 
 const $=(t,a,c)=>{const e=document.createElement(t);if(a)Object.assign(e,a);if(c)c.forEach(x=>e.append(x));return e;};
 
+const decodedFrames=new Map(),decodingFrames=new Map();let decodedBytes=0;
 async function inflate(b64){
-  const bin=atob(b64),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
-  const buf=await new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
-  return new Uint16Array(buf);
+ if(decodedFrames.has(b64)){const a=decodedFrames.get(b64);decodedFrames.delete(b64);decodedFrames.set(b64,a);return a;}
+ if(decodingFrames.has(b64))return decodingFrames.get(b64);
+ const job=(async()=>{const bin=atob(b64),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
+  const buf=await new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer(),a=new Uint16Array(buf);
+  decodedFrames.set(b64,a);decodedBytes+=a.byteLength;while(decodedBytes>32*1024*1024&&decodedFrames.size>1){const key=decodedFrames.keys().next().value;decodedBytes-=decodedFrames.get(key).byteLength;decodedFrames.delete(key);}return a;
+ })();decodingFrames.set(b64,job);try{return await job;}finally{decodingFrames.delete(b64);}
 }
-
 async function getFrame(i,idx,enh,cancelled=()=>false){
-  const s=P.series[i],st=S[i],key=idx+(enh?'e':'o'),cache=st.cache;
-  if(cache.has(key)){const v=cache.get(key);cache.delete(key);cache.set(key,v);return v;}
-  const arr=await decodeCatalogFrame(s,idx,enh,cancelled);if(!arr)return new Uint16Array(0);
-  cache.set(key,arr);if(cache.size>(s.reconstruction?4:40))cache.delete(cache.keys().next().value);
-  return arr;
+ const s=P.series[i],st=S[i],key=idx+(enh?'e':'o'),cache=st.cache;
+ if(cache.has(key)){const v=cache.get(key);cache.delete(key);cache.set(key,v);return v;}
+ cancelled.channel=cancelled.channel||'voxel-'+i;cancelled.priority=cancelled.priority??(i===hover?10:5);
+ const arr=await decodeCatalogFrame(s,idx,enh,cancelled);if(!arr||cancelled())return new Uint16Array(0);
+ cache.set(key,arr);if(cache.size>(s.reconstruction?8:8))cache.delete(cache.keys().next().value);return arr;
 }
 
 const val=(s,u)=>s.off+u*s.scale;
@@ -1815,30 +1808,80 @@ window.addEventListener('pointerup',()=>S.forEach((st,i)=>endOriginal(i)));
 window.addEventListener('pointercancel',()=>S.forEach((st,i)=>endOriginal(i)));
 window.addEventListener('blur',()=>S.forEach((st,i)=>endOriginal(i)));
 document.addEventListener('visibilitychange',()=>{if(document.hidden)S.forEach((st,i)=>endOriginal(i));});
-async function draw(i){
-  const s=P.series[i],st=S[i];if(!s||st.panel.hidden)return;const tok=++st.tok;
+// Pixel work is isolated from DOM input. Queues retain the newest request per viewport.
+async function resamplePlane(v,r,g,w,h,mode,preview,cancelled=()=>false){
+ const out=new Uint16Array(w*h),start=rVoxel(v,g.origin),px=rVoxel(v,g.origin.map((q,i)=>q+g.row[i]*r.spacing)),py=rVoxel(v,g.origin.map((q,i)=>q+g.col[i]*r.spacing));
+ const dx=px.map((q,i)=>q-start[i]),dy=py.map((q,i)=>q-start[i]),n=[rDot(r.normal,v.row)/v.spacing[1],rDot(r.normal,v.col)/v.spacing[0],rDot(r.normal,v.normal)/v.spacing[2]],samples=mode==='MPR'?1:(preview?Math.min(17,r.samples):r.samples),stride=preview?2:1;
+ let checkpoint=performance.now();
+ for(let y=0;y<h;y+=stride){
+  if(cancelled())return null;
+  for(let x=0;x<w;x+=stride){const vx=start[0]+x*dx[0]+y*dy[0],vy=start[1]+x*dx[1]+y*dy[1],vz=start[2]+x*dx[2]+y*dy[2];let total=0,count=0,result=mode==='MinIP'?Infinity:-Infinity;
+   for(let z=0;z<samples;z++){const offset=samples===1?0:(z/(samples-1)-.5)*r.slab,value=rSample(v,vx+n[0]*offset,vy+n[1]*offset,vz+n[2]*offset);if(value===null)continue;total+=value;count++;result=mode==='MinIP'?Math.min(result,value):Math.max(result,value);}
+   const pixel=count?Math.round(mode==='Average'?total/count:result):0;
+   for(let yy=y;yy<Math.min(h,y+stride);yy++)for(let xx=x;xx<Math.min(w,x+stride);xx++)out[yy*w+xx]=pixel;
+  }
+  if(y%4===0&&performance.now()-checkpoint>8){await new Promise(resolve=>setTimeout(resolve,0));checkpoint=performance.now();}
+ }return cancelled()?null:out;
+}
+function rasterPixels(s,view,data,filterCache,key){
+ const w=s.cols,h=s.rows,rng=Math.max(1e-9,view.hi-view.lo);let filtered=null;
+ if(view.smooth||view.sharp){
+  const fkey=key+':'+view.smooth+':'+view.sharp;
+  if(filterCache.has(fkey))filtered=filterCache.get(fkey);
+  else{filtered=filterPixels(Float32Array.from(data,u=>s.off+u*s.scale),w,h,view.smooth,view.sharp,rng);filterCache.set(fkey,filtered);let bytes=0;for(const a of filterCache.values())bytes+=a.byteLength;while(bytes>16*1024*1024&&filterCache.size>1){const id=filterCache.keys().next().value;bytes-=filterCache.get(id).byteLength;filterCache.delete(id);}}
+ }
+ const intensity=k=>filtered?filtered[k]:s.off+data[k]*s.scale,out=new Uint8ClampedArray(w*h*4);
+ if(view.ctLike){const gray=new Float32Array(w*h);for(let k=0;k<gray.length;k++)gray[k]=255*Math.pow(1-Math.max(0,Math.min(1,(intensity(k)-view.lo)/rng)),view.ctContrast);const image=ctDisplay(gray,w,h,view.ctSharp);for(let k=0,j=0;k<image.length;k++,j+=4){out[j]=out[j+1]=out[j+2]=image[k];out[j+3]=255;}}
+ else if(!filtered&&!(view.wl==='balanced'&&s.presentation?.field)){
+  // Exact Uint16 lookup avoids per-pixel window/gamma calculations on every W/L drag.
+  const lut=new Uint8ClampedArray(65536),first=s.scale>0?Math.max(0,Math.ceil((view.lo-s.off)/s.scale)):0,last=s.scale>0?Math.min(65535,Math.floor((view.hi-s.off)/s.scale)):65535;lut.fill(view.inv?255:0);if(last<65535)lut.fill(view.inv?0:255,Math.max(0,last+1));for(let u=first;u<=last;u++){let g=presentationGray(s,view,s.off+u*s.scale,0,0);lut[u]=view.inv?255-g:g;}
+  for(let k=0,j=0;k<data.length;k++,j+=4){out[j]=out[j+1]=out[j+2]=lut[data[k]];out[j+3]=255;}
+ }else for(let k=0,j=0;k<data.length;k++,j+=4){let g=presentationGray(s,view,intensity(k),k%w,Math.floor(k/w));if(view.inv)g=255-g;out[j]=out[j+1]=out[j+2]=g;out[j+3]=255;}
+ return out;
+}
+const pixelEngine={worker:null,disabled:false,queue:[],active:null,serial:0,volumes:new Set(),loadingVolumes:new Map(),fallbackFilters:new Map(),metrics:{submitted:0,replaced:0,completed:0},
+ init(){if(this.worker||this.disabled)return;try{
+  const functions=[rVoxel,rSample,resamplePlane,filterLevel,blurPixels,filterNoise,filterPixels,presentationValue,presentationGray,ctDisplay,rasterPixels,measureROI].map(f=>f.toString()).join('\n');
+  const code='const rDot='+rDot.toString()+';const rSub='+rSub.toString()+';\n'+functions+`\nconst volumes=new Map(),filters=new Map(),cancelled=new Set(),running=new Set();onmessage=async({data:m})=>{if(m.type==='cancel'){if(running.has(m.target))cancelled.add(m.target);return;}if(m.type==='drop'){volumes.delete(m.key);return;}running.add(m.id);try{let result;if(m.type==='volume'){volumes.set(m.key,m.volume);result=true;}else if(m.type==='recon'){const v=volumes.get(m.key);if(!v)throw Error('Reconstruction source unavailable');result=await resamplePlane(v,m.r,m.g,m.w,m.h,m.mode,m.preview,()=>cancelled.has(m.id));}else if(m.type==='roi')result=measureROI(m.s,m.pixels,m.roi);else result=rasterPixels(m.s,m.view,m.pixels,filters,m.key);if(cancelled.delete(m.id))result=null;postMessage({id:m.id,result},result?.buffer?[result.buffer]:[]);}catch(e){postMessage({id:m.id,error:e.message});}finally{running.delete(m.id);cancelled.delete(m.id);}};`;
+  const url=URL.createObjectURL(new Blob([code],{type:'text/javascript'}));this.worker=new Worker(url);URL.revokeObjectURL(url);
+  this.worker.onmessage=({data:m})=>{const job=this.active;if(!job||job.id!==m.id)return;this.active=null;this.metrics.completed++;if(m.error)job.reject(Error(m.error));else job.resolve(m.result);this.pump();};
+  this.worker.onerror=e=>{e.preventDefault();this.disabled=true;this.worker.terminate();this.worker=null;this.volumes.clear();const jobs=[this.active,...this.queue].filter(Boolean);this.active=null;this.queue=[];for(const job of jobs)job.reject(Error('Pixel worker unavailable: '+e.message));};
+ }catch(e){this.disabled=true;console.warn('Pixel worker unavailable; using cooperative fallback.',e.message);}},
+ cancel(channel){if(!channel)return;for(const job of this.queue.filter(j=>j.channel===channel)){job.resolve(null);this.metrics.replaced++;}this.queue=this.queue.filter(j=>j.channel!==channel);if(this.active?.channel===channel&&this.worker){this.worker.postMessage({type:'cancel',target:this.active.id});}},
+ run(message,channel='',priority=0){this.init();if(!this.worker)return Promise.reject(Error('Pixel worker unavailable'));
+  this.metrics.submitted++;if(channel)this.cancel(channel);return new Promise((resolve,reject)=>{this.queue.push({...message,id:++this.serial,channel,priority,resolve,reject});this.pump();});},
+ pump(){if(this.active||!this.queue.length||!this.worker)return;this.queue.sort((a,b)=>b.priority-a.priority);const job=this.queue.shift();this.active=job;const {resolve,reject,...message}=job;this.worker.postMessage(message);},
+ async ensure(v){this.init();if(!this.worker)return false;if(!v.workerKey)v.workerKey='volume-'+(++this.serial);if(this.volumes.has(v.workerKey))return true;if(this.loadingVolumes.has(v.workerKey))return this.loadingVolumes.get(v.workerKey);const job=this.run({type:'volume',key:v.workerKey,volume:v},'',20).then(()=>{this.volumes.add(v.workerKey);return true;}).finally(()=>this.loadingVolumes.delete(v.workerKey));this.loadingVolumes.set(v.workerKey,job);return job;},
+ forget(key){this.volumes.delete(key);this.worker?.postMessage({type:'drop',key});}
+};
+window.addEventListener('pagehide',()=>pixelEngine.worker?.terminate());
+
+const pendingDraws=new Map();let drawFrame=0;
+function draw(i){
+ const st=S[i];if(!st||!P.series[i]||st.panel.hidden)return Promise.resolve();st.tok++;
+ st.framePending=true;pixelEngine.cancel('voxel-'+i);pixelEngine.cancel('display-'+i);
+ return new Promise(resolve=>{if(!pendingDraws.has(i))pendingDraws.set(i,[]);pendingDraws.get(i).push(resolve);
+  if(!drawFrame)drawFrame=requestAnimationFrame(()=>{drawFrame=0;const jobs=[...pendingDraws];pendingDraws.clear();jobs.sort((a,b)=>(b[0]===hover)-(a[0]===hover));for(const [j,done] of jobs){const token=S[j].tok;paintViewport(j).catch(e=>{S[j].stat.textContent=e.message;S[j].stat.classList.add('render-error');}).finally(()=>{if(S[j].tok===token)S[j].framePending=false;done.forEach(f=>f());});}});
+ });
+}
+async function paintViewport(i){
+
+  const s=P.series[i],st=S[i];if(!s||st.panel.hidden)return;const tok=st.tok;
   st.stat.classList.remove('render-error');st.refreshReferenceDisplay?.();
   const view=st.holdOriginal?originalPresentation(s,st):st;
-  const useEnh=!st.holdOriginal&&!view.ctLike&&st.enh&&s.hasEnh;let data;try{data=await getFrame(i,st.idx,useEnh,()=>tok!==st.tok);}catch(e){if(tok===st.tok){st.stat.classList.add('render-error');st.stat.textContent='Could not render this plane: '+e.message;}return;}
-  if(tok!==st.tok||!data.length)return;
-  const w=s.cols,h=s.rows,oc=st.oc||(st.oc=$('canvas'));oc.width=w;oc.height=h;
-  const octx=oc.getContext('2d'),img=octx.createImageData(w,h),px=img.data;
-  const rng=Math.max(1e-9,view.hi-view.lo),inv=view.inv;
-  let filtered=null;
-  if(!st.holdOriginal&&(st.smooth||st.sharp)){
-   const key=[st.idx,useEnh,st.smooth,st.sharp].join(':');
-   if(st.filterCache?.key===key)filtered=st.filterCache.data;
-   else{filtered=filterPixels(Float32Array.from(data,u=>val(s,u)),w,h,st.smooth,st.sharp,rng);st.filterCache={key,data:filtered};}
+  const useEnh=!st.holdOriginal&&!view.ctLike&&st.enh&&s.hasEnh,w=s.cols,h=s.rows;
+  const rasterKey=[s.memoryId,st.idx,useEnh,view.wl,view.lo,view.hi,view.inv,st.holdOriginal?0:st.smooth,st.holdOriginal?0:st.sharp,view.ctLike,st.ctContrast,st.ctSharp].join(':');
+  const oc=st.oc||(st.oc=$('canvas'));
+  if(st.rasterKey!==rasterKey){
+   let data;try{data=await getFrame(i,st.idx,useEnh,()=>tok!==st.tok);}catch(e){if(tok===st.tok){st.stat.classList.add('render-error');st.stat.textContent='Could not render this plane: '+e.message;}return;}
+   if(tok!==st.tok||!data.length)return;
+   const settings={wl:view.wl,lo:view.lo,hi:view.hi,inv:view.inv,ctLike:view.ctLike,ctContrast:st.ctContrast,ctSharp:st.ctSharp,smooth:st.holdOriginal?0:st.smooth,sharp:st.holdOriginal?0:st.sharp};
+   const description={cols:s.cols,rows:s.rows,off:s.off,scale:s.scale,presentation:s.presentation},key=s.memoryId+':'+st.idx+':'+useEnh;
+   let pixels;pixelEngine.init();
+   if(pixelEngine.worker&&!st.holdOriginal&&(settings.smooth||settings.sharp||settings.ctLike||settings.wl==='balanced'&&s.presentation?.field))pixels=await pixelEngine.run({type:'raster',s:description,view:settings,pixels:data,key},'display-'+i,i===hover?15:6);
+   else pixels=rasterPixels(description,settings,data,pixelEngine.fallbackFilters,key);
+   if(tok!==st.tok||!pixels)return;oc.width=w;oc.height=h;const context=oc.getContext('2d'),image=context.createImageData(w,h);image.data.set(pixels);context.putImageData(image,0,0);st.rasterKey=rasterKey;
   }
-  const intensity=k=>filtered?filtered[k]:val(s,data[k]);
-  for(let k=0,j=0;k<data.length;k++,j+=4){let g=presentationGray(s,view,intensity(k),k%w,Math.floor(k/w));if(inv)g=255-g;px[j]=px[j+1]=px[j+2]=g;px[j+3]=255;}
-  if(view.ctLike){
-    const gray=new Float32Array(w*h);
-    for(let k=0;k<gray.length;k++){const normal=Math.max(0,Math.min(1,(intensity(k)-view.lo)/rng));gray[k]=255*Math.pow(1-normal,st.ctContrast);}
-    const display=ctDisplay(gray,w,h,st.ctSharp);
-    for(let k=0;k<display.length;k++){const j=k*4;px[j]=px[j+1]=px[j+2]=display[k];}
-  }
-  octx.putImageData(img,0,0);
   const cv=st.cv,ctx=cv.getContext('2d'),dpr=window.devicePixelRatio||1,cw=cv.clientWidth,ch=cv.clientHeight;
   if(cv.width!==Math.round(cw*dpr)||cv.height!==Math.round(ch*dpr)){cv.width=Math.round(cw*dpr);cv.height=Math.round(ch*dpr);}
   ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle='#000';ctx.fillRect(0,0,cv.width,cv.height);
@@ -1880,7 +1923,7 @@ const drawAll=()=>{for(let i=0;i<N;i++)draw(i);};
 
 function setIdx(i,v,fromSync){
   const s=P.series[i],st=S[i];if(!s||st.holdOriginal)return;v=Math.max(0,Math.min(s.pos.length-1,v));if(v===st.idx&&!fromSync)return;
-  cancelAngle(i);st.idx=v;if(i===hover)refreshReconstructionInspector(i);draw(i);
+  cancelAngle(i);st.idx=v;if(i===hover)refreshReconstructionInspector(i);
   if(opt.sync&&!fromSync){
     const source=geom(i),point=source?patientPoint(source,(s.cols-1)/2,(s.rows-1)/2):null;
     let matched=0;
@@ -1891,7 +1934,7 @@ function setIdx(i,v,fromSync){
     }
     readingNotice.textContent=matched?'Position linked: '+matched+' compatible viewport(s).':'Scroll independent: no compatible geometry match.';
   }
-  drawAll();
+  if(opt.sync&&!fromSync)drawAll();else draw(i);
 }
 
 function resetView(i){const s=P.series[i],st=S[i];if(!s)return;st.zoom=1;st.matchPoint=null;st.rotation=0;st.flipH=st.flipV=false;st.px=st.py=0;st.wl=s.presentation?.default||'auto';const w=s.wl[st.wl];st.lo=w[0];st.hi=w[1];st.syncDisplayUI?.();updateView(i,true);}
@@ -1903,20 +1946,31 @@ function angleDegrees(s,m){
  const den=Math.hypot(ax,ay)*Math.hypot(bx,by);return den<1e-12?null:Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/den)))*180/Math.PI;
 }
 function cancelAngle(i){const st=S[i];if(st.pendingAngle){const a=st.meas[st.pendingAngle.idx]||[];st.meas[st.pendingAngle.idx]=a.filter(m=>m!==st.pendingAngle.m);st.pendingAngle=null;}}
-async function roiStats(i,m,idx){
- const s=P.series[i],data=await getFrame(i,idx,false);
+function measureROI(s,data,m){
  const left=Math.min(m.x1,m.x2),right=Math.max(m.x1,m.x2),top=Math.min(m.y1,m.y2),bottom=Math.max(m.y1,m.y2);
  const cx=(left+right)/2,cy=(top+bottom)/2,rx=(right-left)/2,ry=(bottom-top)/2,values=[];
  for(let y=Math.max(0,Math.ceil(top));y<=Math.min(s.rows-1,Math.floor(bottom));y++)for(let x=Math.max(0,Math.ceil(left));x<=Math.min(s.cols-1,Math.floor(right));x++){
   if(m.type==='ellipse'&&(rx===0||ry===0||((x-cx)/rx)**2+((y-cy)/ry)**2>1))continue;
-  values.push(val(s,data[y*s.cols+x]));
+  values.push(s.off+data[y*s.cols+x]*s.scale);
  }
- if(!values.length){m.txt='No pixels in ROI';draw(i);return;}
+ if(!values.length)return null;
  values.sort((a,b)=>a-b);const n=values.length,mean=values.reduce((a,b)=>a+b,0)/n,sd=Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/n),mn=values[0],mx=values[n-1],median=n%2?values[(n-1)/2]:(values[n/2-1]+values[n/2])/2;
  const bins=new Array(64).fill(0),width=(mx-mn)/64;
  for(const v of values)bins[width?Math.min(63,Math.floor((v-mn)/width)):0]++;
  const peak=bins.indexOf(Math.max(...bins)),mode=width?mn+(peak+.5)*width:mn;
- m.txt=(s.reconstruction?'Thin resampled plane · projection excluded':s.derivedComposite?'Derived resampled composite':'Original pixels')+'\nMean: '+mean.toFixed(2)+' · SD: '+sd.toFixed(2)+'\nMedian: '+median.toFixed(2)+'\nMode (64 bins): '+mode.toFixed(2)+'\nMin/Max: '+mn.toFixed(2)+' / '+mx.toFixed(2)+'\nArea: '+(n*s.spacing[0]*s.spacing[1]).toFixed(2)+' mm²';draw(i);
+ return {n,mean,sd,mn,mx,median,mode};
+}
+async function roiStats(i,m,idx){
+ const s=P.series[i],token=(m.statsToken||0)+1;m.statsToken=token;
+ const cancelled=()=>P.series[i]!==s||m.statsToken!==token;cancelled.channel='roi-source-'+i+'-'+m.id;
+ try{const data=await getFrame(i,idx,false,cancelled);if(cancelled()||!data.length)return;
+  const description={rows:s.rows,cols:s.cols,off:s.off,scale:s.scale};pixelEngine.init();
+  const result=pixelEngine.worker?await pixelEngine.run({type:'roi',s:description,pixels:data,roi:m},'roi-'+i+'-'+m.id,12):measureROI(description,data,m);
+  if(cancelled()||m.id!=null&&!(S[i].meas[idx]||[]).includes(m))return;
+  if(!result){m.txt='No pixels in ROI';draw(i);return;}
+  const {n,mean,sd,mn,mx,median,mode}=result;
+  m.txt=(s.reconstruction?'Thin resampled plane · projection excluded':s.derivedComposite?'Derived resampled composite':'Original pixels')+'\nMean: '+mean.toFixed(2)+' · SD: '+sd.toFixed(2)+'\nMedian: '+median.toFixed(2)+'\nMode (64 bins): '+mode.toFixed(2)+'\nMin/Max: '+mn.toFixed(2)+' / '+mx.toFixed(2)+'\nArea: '+(n*s.spacing[0]*s.spacing[1]).toFixed(2)+' mm²';draw(i);
+ }catch(e){if(!cancelled()){m.txt='Measurement unavailable: '+e.message;draw(i);}}
 }
 
 const nearestMenu=$('div',{id:'nearest-image-menu',hidden:true,role:'menu',ariaLabel:'Image actions'});
@@ -2035,13 +2089,18 @@ function refreshReconstructionInspector(i){
  const position=$('input',{type:'range',min:'0',max:String(s.pos.length-1),step:'1',value:String(S[i].idx),ariaLabel:'Plane position'});
  const angles=['Pitch','Yaw','Roll'].map((name,k)=>$('input',{type:'range',min:'-180',max:'180',step:'.1',value:String(r.angles[k]),ariaLabel:name+' in degrees'}));
  const status=$('p',{className:'recon-status',role:'status',ariaLive:'polite',textContent:r.volume.warning||''});
- const changes=preview=>{
-  // Each event resolves the active series afresh; stale controls never edit another viewport.
-  if(reconPanel._key!=='volume-'+catalog.indexOf(P.series[hover]))return;
-  const options={mode:mode.value,plane:plane.value,slab:Number(slab.value),spacing:Number(spacing.value),angles:angles.map(a=>Number(a.value)),preview};
-  slab.disabled=mode.value==='MPR';clearTimeout(reconEditTimer);
-  S[hover].tok++;reconEditTimer=setTimeout(()=>{try{updateLiveReconstruction(hover,options);status.textContent=preview?'Interactive preview · release for full sampling.':(P.series[hover].reconstruction.volume.warning||'');}catch(e){status.textContent=e.message;}},preview?40:0);
+ let pendingEdit=null;
+ const applyEdit=()=>{reconEditTimer=null;const request=pendingEdit;pendingEdit=null;if(!request||hover!==request.target||P.series[request.target]!==request.before)return;
+  try{updateLiveReconstruction(request.target,request.options);status.textContent=request.options.preview?'Interactive preview · release for full sampling.':(P.series[request.target].reconstruction.volume.warning||'');}catch(e){status.textContent=e.message;}
  };
+ const changes=preview=>{
+  if(reconPanel._key!=='volume-'+catalog.indexOf(P.series[hover]))return;
+  pendingEdit={target:hover,before:P.series[hover],options:{mode:mode.value,plane:plane.value,slab:Number(slab.value),spacing:Number(spacing.value),angles:angles.map(a=>Number(a.value)),preview}};
+  slab.disabled=mode.value==='MPR';
+  if(!preview){clearTimeout(reconEditTimer);reconEditTimer=setTimeout(applyEdit,0);}
+  else if(reconEditTimer===null)reconEditTimer=setTimeout(applyEdit,40);
+ };
+
  for(const control of [slab,...angles]){control.addEventListener('input',()=>changes(true));control.addEventListener('change',()=>changes(false));control.addEventListener('blur',()=>{if(P.series[hover]?.reconstruction?.preview)changes(false);});}
  mode.onchange=plane.onchange=spacing.onchange=()=>changes(false);slab.disabled=r.mode==='MPR';
  position.addEventListener('input',()=>{setIdx(hover,Number(position.value));position.nextElementSibling.textContent=(Number(position.value)+1)+' / '+P.series[hover].pos.length;});
@@ -2070,7 +2129,7 @@ function updateLiveReconstruction(target,options){
 }
 async function openReconstruction(initialMode='MPR'){
  if(reconBusy)return;const active=P.series[hover],target=hover,existing=active?.reconstruction;
- if(!active)return;clearTimeout(reconEditTimer);
+ if(!active)return;clearTimeout(reconEditTimer);reconEditTimer=null;
  if(existing){try{updateLiveReconstruction(target,{mode:initialMode,plane:existing.plane,slab:existing.slab,spacing:existing.spacing,angles:existing.angles,preview:false});reconPanel._key=null;refreshReconstructionInspector(target);}catch(e){reconstructionMessage(active,e.message,true);}return;}
  const src=catalog.indexOf(active),op=++reconOperation;reconBusy=true;reconstructionMessage(active,'Checking active series geometry…');
  try{
@@ -2214,7 +2273,7 @@ function refreshInspector(i){
  inspectorTitle.textContent=P.series[i]?.title||'No active series';inspectorEmpty.hidden=!!P.series[i];
 }
 window.addEventListener('resize',()=>refreshInspector(hover));
-function activate(i){refreshInspector(i);toolG.querySelectorAll('[data-tool]').forEach(b=>{const key=b.dataset.tool;if(key==='flipH'||key==='flipV'){b.classList.toggle('on',!!S[i][key]);b.setAttribute('aria-pressed',String(!!S[i][key]));}});const changed=hover!==i;hover=i;refreshOverlays();updateActiveSummary();if(changed)drawAll();document.querySelectorAll('.panel').forEach((p,j)=>p.classList.toggle('active-viewport',j===i));rail.querySelectorAll('.series-card').forEach((p,j)=>p.classList.toggle('active',catalog[j]===P.series[i]));}
+function activate(i){if(i!==hover){clearTimeout(reconEditTimer);reconEditTimer=null;const r=P.series[hover]?.reconstruction;if(r?.preview)updateLiveReconstruction(hover,{mode:r.mode,plane:r.plane,slab:r.slab,spacing:r.spacing,angles:r.angles,preview:false});}refreshInspector(i);toolG.querySelectorAll('[data-tool]').forEach(b=>{const key=b.dataset.tool;if(key==='flipH'||key==='flipV'){b.classList.toggle('on',!!S[i][key]);b.setAttribute('aria-pressed',String(!!S[i][key]));}});const changed=hover!==i;hover=i;refreshOverlays();updateActiveSummary();if(changed)drawAll();document.querySelectorAll('.panel').forEach((p,j)=>p.classList.toggle('active-viewport',j===i));rail.querySelectorAll('.series-card').forEach((p,j)=>p.classList.toggle('active',catalog[j]===P.series[i]));}
 async function thumbnail(i,cv){const s=P.series[i],data=await getFrame(i,Math.floor(s.pos.length/2),false);cv.width=s.cols;cv.height=s.rows;const ctx=cv.getContext('2d'),im=ctx.createImageData(s.cols,s.rows),[lo,hi]=s.wl.auto;for(let k=0;k<data.length;k++){let v=Math.max(0,Math.min(255,255*(val(s,data[k])-lo)/Math.max(1e-9,hi-lo)));if(s.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);}
 P.series.forEach((item,i)=>{
   let s=item||catalog[0];
@@ -2236,7 +2295,7 @@ P.series.forEach((item,i)=>{
   bRst.onclick=()=>resetView(i);
   bPlay.onclick=()=>{
     if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
-    else{bPlay.className='on';st.play=setInterval(()=>{if(!st.holdOriginal)setIdx(i,(st.idx+1)%s.pos.length);},120);}
+    else{bPlay.className='on';st.play=setInterval(()=>{if(!st.holdOriginal&&!st.framePending)setIdx(i,(st.idx+1)%s.pos.length);},120);}
   };
   
   const bCT=$('button',{textContent:'CT-like',title:'Experimental MRI display: inverted contrast and bounded sharpening. Also emphasizes other low-signal tissues.'});
@@ -2298,13 +2357,13 @@ P.series.forEach((item,i)=>{
   moreGroup.firstChild.dataset.referenceText='true';const head=pnl.querySelector('.hd');for(const node of Array.from(head.children))if(!node.classList.contains('ttl'))moreGroup.append(node);head.append(displayGroup,moreGroup);st.moreGroup=moreGroup;st.refreshReferenceDisplay();
   grid.append(pnl);st.header=pnl.querySelector(".hd");const planeTitle=pnl.querySelector('.ttl');planeTitle.tabIndex=0;planeTitle.title=s.title+' — click for reconstruction plane controls';planeTitle.onclick=e=>{e.stopPropagation();activate(i);if(s.reconstruction){st.moreGroup.open=true;st.moreGroup.querySelector('.recon-advanced')?.setAttribute('open','');}else openReconstruction('MPR');};
   const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
-  st.clear=()=>{endOriginal(i,false);st.filterCache=null;stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover){updateActiveSummary();refreshInspector(i);}};
+  st.clear=()=>{endOriginal(i,false);st.filterCache=null;st.rasterKey=null;stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover){updateActiveSummary();refreshInspector(i);}};
   st.displayConfig=()=>({rotation:st.rotation,flipH:st.flipH,flipV:st.flipV,smooth:st.smooth,sharp:st.sharp,wl:sel.value,inv:st.inv,enh:st.enh,ctLike:st.ctLike,ctContrast:st.ctContrast,ctSharp:st.ctSharp});
   st.applyDisplay=c=>{st.rotation=Number.isFinite(c.rotation)?c.rotation:0;st.flipH=!!c.flipH;st.flipV=!!c.flipV;st.smooth=filterLevel(c.smooth);st.sharp=filterLevel(c.sharp);filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);sel.value=['balanced','auto','dicom','full','angio','dwi','vessels'].includes(c.wl)&&s.wl[c.wl]?c.wl:'auto';preset(i,sel.value);st.inv=!!c.inv;st.enh=!!c.enh&&s.hasEnh;bInv.className=st.inv?'on':'';bEnh.className=st.enh?'on':'';if(c.ctLike&&s.modality==='MR'){st.ctContrast=Math.max(.7,Math.min(1.8,Number(c.ctContrast)||1.25));st.ctSharp=Math.max(0,Math.min(.5,Number(c.ctSharp)||0));settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;bCT.onclick();}st.syncDisplayUI();draw(i);};
-  st.syncDisplayUI=()=>{bRecon.disabled=!!s.derivedComposite;bRecon.title='Reconstruction settings — change plane, oblique angles, slab thickness or projection mode.';bPair.disabled=s.diffusionPair?.adc==null;bPair.title='Open paired ADC — '+(s.diffusionPair?.status||'This image has no automatic ADC pair.');bCandidates.disabled=s.restrictedCandidates?.status!=='processed';bCandidates.title='Restricted-diffusion candidates — '+(s.restrictedCandidates?.reason||'Enable the research option in Diffusion review; original matched high-b DWI and ADC with explicit units are required.');bCandidates.classList.toggle('on',!!st.candidateOverlay);angleInput.value=String(Math.round(st.rotation||0));bOriginal.title=s.reconstruction?'Original — hold to show the unfiltered thin reconstruction. The uploaded source stack remains available separately.':s.derivedComposite?'Original — hold to view the unbalanced source composite, still resampled and blended.':'Original — hold to bypass processing at the source DICOM window. Release to restore.';sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
+  st.syncDisplayUI=()=>{sel._updateIconTitle?.();bRecon.disabled=!!s.derivedComposite;bRecon.title='Reconstruction settings — change plane, oblique angles, slab thickness or projection mode.';bPair.disabled=s.diffusionPair?.adc==null;bPair.title='Open paired ADC — '+(s.diffusionPair?.status||'This image has no automatic ADC pair.');bCandidates.disabled=s.restrictedCandidates?.status!=='processed';bCandidates.title='Restricted-diffusion candidates — '+(s.restrictedCandidates?.reason||'Enable the research option in Diffusion review; original matched high-b DWI and ADC with explicit units are required.');bCandidates.classList.toggle('on',!!st.candidateOverlay);angleInput.value=String(Math.round(st.rotation||0));bOriginal.title=s.reconstruction?'Original — hold to show the unfiltered thin reconstruction. The uploaded source stack remains available separately.':s.derivedComposite?'Original — hold to view the unbalanced source composite, still resampled and blended.':'Original — hold to bypass processing at the source DICOM window. Release to restore.';sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
   st.updateReconstruction=(next,idx)=>{
     endOriginal(i,false);stopMagnifier(i);cancelAngle(i);st.tok++;s=next;P.series[i]=next;
-    Object.assign(st,{idx,cache:new Map(),filterCache:null,meas:{},lay:null,matchPoint:null,enh:next.hasEnh});
+    Object.assign(st,{idx,cache:new Map(),filterCache:null,rasterKey:null,meas:{},lay:null,matchPoint:null,enh:next.hasEnh});
     pnl.querySelector('.ttl').textContent=next.reconstruction.oblique?'Oblique':next.reconstruction.plane;pnl.querySelector('.ttl').title=next.title;bEnh.style.display=next.hasEnh?'':'none';st.syncDisplayUI();draw(i);
   };
   st.assign=(index)=>{
@@ -2379,6 +2438,13 @@ P.series.forEach((item,i)=>{
   cv.addEventListener('dblclick',e=>{e.preventDefault();const saved=st.clickSnapshot;if(saved&&saved.idx===st.idx&&performance.now()-saved.at<650){st.meas[st.idx]=saved.meas;const m=saved.pending?saved.meas.find(m=>m.id===saved.pending.id):null;st.pendingAngle=m?{idx:saved.pending.idx,m,step:saved.pending.step}:null;}st.clickSnapshot=null;toggleViewport(i);});
 });
 
+async function catalogThumbnail(s){
+ if(!s.reconstruction)return {data:await decodeCatalogFrame(s,Math.floor(s.pos.length/2),false),rows:s.rows,cols:s.cols};
+ const r=s.reconstruction,v=r.volume,k=Math.floor(s.pos.length/2),factor=Math.max(1,Math.max(s.rows,s.cols)/96),rows=Math.ceil(s.rows/factor),cols=Math.ceil(s.cols/factor),spec={spacing:r.spacing*factor,normal:r.normal,slab:r.slab,samples:r.samples};let data;
+ if(await pixelEngine.ensure(v))data=await pixelEngine.run({type:'recon',key:v.workerKey,r:spec,g:s.geometry[k],w:cols,h:rows,mode:r.mode,preview:false},'thumbnail-'+catalog.indexOf(s),-10);
+ else data=await resamplePlane(v,spec,s.geometry[k],cols,rows,r.mode,false);
+ return {data,rows,cols};
+}
 function appendSeriesCard(s,index){
  const thumb=$('canvas'),card=$('button',{className:'series-card'+(index===0?' active':''),title:s.title+' · drag into a viewport',ariaLabel:'Load '+s.title,draggable:true});
  document.getElementById('series-count').textContent='('+catalog.length+')';
@@ -2386,7 +2452,7 @@ function appendSeriesCard(s,index){
  card.ondragstart=e=>{e.dataTransfer.setData('application/x-dicom-series',String(index));e.dataTransfer.effectAllowed='copy';};
  card.onclick=()=>S[hover].assign(index);rail.append(card);
  // Decode thumbnail independently from viewport assignment.
- (async()=>{const data=await decodeCatalogFrame(s,Math.floor(s.pos.length/2),s.reconstruction&&s.hasEnh);thumb.width=s.cols;thumb.height=s.rows;const ctx=thumb.getContext('2d'),im=ctx.createImageData(s.cols,s.rows),[lo,hi]=s.wl.auto;for(let k=0;k<data.length;k++){let v=Math.max(0,Math.min(255,255*(val(s,data[k])-lo)/Math.max(1e-9,hi-lo)));if(s.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);})();
+ (async()=>{const {data,rows,cols}=await catalogThumbnail(s);if(!data||!thumb.isConnected)return;thumb.width=cols;thumb.height=rows;const ctx=thumb.getContext('2d'),im=ctx.createImageData(cols,rows),[lo,hi]=s.wl.auto;for(let k=0;k<data.length;k++){let v=Math.max(0,Math.min(255,255*(val(s,data[k])-lo)/Math.max(1e-9,hi-lo)));if(s.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);})().catch(e=>{card.title=s.title+' · Thumbnail unavailable: '+e.message;});
 }
 catalog.forEach(appendSeriesCard);
 setLayout(2,2);
@@ -2445,7 +2511,7 @@ function makeToolbarIcons(){
 }
 refreshInspector(hover);
 makeToolbarIcons();
-const iconObserver=new MutationObserver(makeToolbarIcons);iconObserver.observe(bar,{childList:true,subtree:true});iconObserver.observe(grid,{childList:true,subtree:true});if(inspectorHost)iconObserver.observe(inspectorHost,{childList:true,subtree:true});
+let iconFrame=0;const iconObserver=new MutationObserver(records=>{if(iconFrame||!records.some(r=>[...r.addedNodes].some(n=>n.nodeType===1&&(n.matches('button,select,summary')||n.querySelector('button,select,summary')))))return;iconFrame=requestAnimationFrame(()=>{iconFrame=0;makeToolbarIcons();});});iconObserver.observe(bar,{childList:true,subtree:true});iconObserver.observe(grid,{childList:true,subtree:true});if(inspectorHost)iconObserver.observe(inspectorHost,{childList:true,subtree:true});
 
 window.addEventListener('resize',drawAll);
 drawAll();
@@ -2636,7 +2702,7 @@ def build_study_overview(series, loaded=None, selected=None, failed=0):
 
 
 def main():
-    st.set_page_config(page_title="SD-DCM | A10", page_icon="◉", layout="wide", initial_sidebar_state="collapsed")
+    st.set_page_config(page_title="SD-DCM | P11", page_icon="◉", layout="wide", initial_sidebar_state="collapsed")
     logging.getLogger("dicom_viewer").warning("SD-DCM runtime build: %s | source_sha256=%s", APP_BUILD, hashlib.sha256(open(__file__,"rb").read()).hexdigest()[:16])
     st.markdown(CSS, unsafe_allow_html=True)
     
