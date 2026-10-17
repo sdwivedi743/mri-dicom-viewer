@@ -31,7 +31,7 @@ try:
 except ImportError:
     st = None
 
-APP_BUILD = "2026.10.17-diffusion.5"
+APP_BUILD = "2026.10.17-design.6"
 MAX_PANELS = 6
 WORKSPACE_PAYLOAD_BUDGET = 96 * 1024 * 1024
 
@@ -1151,6 +1151,8 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
 # ----------------------------------------------------------------------------------------------------------------
 #  Diagnostic Interface Engine (Dark-Mode Workspace Layer)
 # ----------------------------------------------------------------------------------------------------------------
+INSPECTOR_HTML = r"""<aside id="inspector" aria-label="Active viewport settings"><div class="inspector-heading">Tools &amp; display</div><div class="inspector-kicker">ACTIVE VIEWPORT</div><div id="inspector-title">No active series</div><div id="inspector-controls" class="hd inspector-actions"></div><div id="inspector-empty" class="inspector-empty">Open a study to begin.<br>Select any viewport to access its display and review controls.</div><div class="inspector-help">Hover over an icon for its name and function.<br>Hold the eye icon to compare with Original.<br>Double-click an image to expand or restore its layout.</div><button class="inspector-settings" data-open-workflow title="Study &amp; processing settings — open upload, enhancement, Signal Balance, station matching and diffusion review" aria-label="Study and processing settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 3v8M16 13v8"/></svg></button></aside>"""
+
 VIEWER_HTML = r"""
 <style>
 *{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:#080c12;color:#d4deea;font:12px -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}
@@ -1230,17 +1232,72 @@ body{font-size:13px}
 .hd button,#bar button{min-width:29px;min-height:29px;padding:5px}
 .hd summary,#bar summary{list-style:none;cursor:pointer}.hd summary::-webkit-details-marker,#bar summary::-webkit-details-marker{display:none}
 #tool-status,.rail-category{display:none}
+/* Reference workstation appearance. Image processing and image-space geometry are unchanged. */
+:root{--surface:#17212e;--edge:#344655;--accent:#64c5ec;--muted:#95a7b9}
+body{padding:12px 0 0;background:radial-gradient(ellipse at 6% 0%,#192e3d 0,transparent 45%),#0b111c;color:#dce5ee;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+.workspace{grid-template-columns:56px 224px minmax(0,1fr) 254px;gap:16px;padding:0;border:0;background:transparent}
+#tool-rail{grid-column:1;grid-row:1;background:transparent;border:0;padding:14px 3px 8px;gap:7px}
+.tool-scroll{gap:7px}.tool-pinned{background:transparent;border-color:#293b4a;padding-top:12px;gap:7px}
+#tool-rail .tool-button{width:43px;height:38px;border-radius:11px;color:#9eb1c3}
+#tool-rail .tool-button:hover{background:#1e3446;color:#dff5ff;border-color:#38556b}
+#tool-rail .tool-button.on{background:linear-gradient(135deg,#213f55,#193044);border-color:#38617b;color:#68cefa;box-shadow:inset 0 1px #ffffff08}
+#series-rail{grid-column:2;grid-row:1;padding:20px 12px;background:linear-gradient(155deg,#1d2b37,#151d2a 60%);border:1px solid #3d5261;border-radius:19px;box-shadow:inset 0 1px #ffffff05,0 12px 24px #0002}
+.rail-heading{font-size:11px;font-weight:600;color:#c5d7e6;letter-spacing:1.5px;padding:0 4px 14px;border-bottom:1px solid #34424f;margin-bottom:15px}
+.series-card{display:grid;grid-template-columns:58px minmax(0,1fr);grid-template-rows:1fr 1fr;column-gap:11px;align-items:center;min-height:79px;padding:9px 7px;margin:0 0 8px;background:transparent;border:1px solid transparent;border-radius:10px;box-shadow:none}
+.series-card canvas{grid-row:1/3;width:58px;height:58px;object-fit:contain;background:#080e17;border-radius:7px;border:1px solid #344451}
+.series-card .name{grid-column:2;align-self:end;margin:0;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-size:12px;line-height:1.35;color:#e0e8f0}
+.series-card .meta{grid-column:2;align-self:start;font-size:11px;color:#8fa6bb;margin-top:5px}
+.series-card:hover{background:#203342;border-color:#385366}.series-card.active{border-color:#5384a1;background:linear-gradient(90deg,#244357,#1c2e3e);box-shadow:inset 3px 0 #64c5ec}
+.viewer-stage{grid-column:3;grid-row:1;display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;border:1px solid #405364;border-radius:19px;background:#0a101a;box-shadow:0 12px 26px #0003}
+#bar{border:0;border-bottom:1px solid #344555;border-radius:0;background:linear-gradient(110deg,#21303e,#192331);padding:11px 13px;gap:9px;max-height:120px;min-height:55px}
+.brand-tag{display:none}#bar label{padding:5px;color:#a4bacd}
+#bar button,.icon-select{background:#202d3c;border:1px solid #344352;border-radius:9px;box-shadow:inset 0 1px #ffffff04}
+#bar button:hover,.icon-select:hover{background:#2a4053;border-color:#5683a0}#bar button.on{background:#23485e;color:#83d6f7}
+#grid{flex:1;gap:8px;padding:8px;background:#0b121d;min-width:0}
+.panel{border:1px solid #2c3b4c;border-radius:11px;background:#03060b}.panel.active-viewport{border-color:#588ba6;box-shadow:0 0 0 1px #5aa6c41a}
+.panel .hd{padding:8px 11px;background:#15202d;min-height:34px;border-color:#283c4c;flex-shrink:0}
+.panel .hd>*:not(.ttl){display:none}
+.panel .ttl{margin:0;font-size:12px;line-height:1.4;color:#bacbdb}
+.panel canvas{background:#03060b}
+.st{background:#101a27;border-color:#2b3d4e;color:#99adc1;font-size:11px;padding:6px 10px;min-height:33px}
+#grid.dense .hd{min-height:24px;padding:4px 6px}.dense .st{font-size:9px}.dense .ttl{font-size:10px}
+#inspector{grid-column:4;grid-row:1;min-height:0;overflow:auto;border:1px solid #405363;border-radius:19px;background:linear-gradient(145deg,#1c2a37,#151f2c 70%);padding:18px 16px;box-shadow:inset 0 1px #ffffff05}
+.inspector-heading{font-size:13px;font-weight:500;color:#7fd5f4;padding-bottom:16px;border-bottom:1px solid #364755;letter-spacing:.2px}
+.inspector-heading::after{content:'';display:block;width:30px;height:2px;background:#65c8ed;position:relative;top:17px}
+.inspector-kicker{margin-top:22px;font-size:10px;letter-spacing:1.2px;color:#819bb1}
+#inspector-title{font-size:13px;line-height:1.6;color:#d9e4ee;margin:9px 0 18px;overflow-wrap:anywhere}
+#inspector .inspector-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;background:none;border:0;padding:0}
+#inspector .inspector-actions>button,#inspector .inspector-actions>.icon-select{width:100%;height:46px;border:1px solid #334658;border-radius:10px;background:linear-gradient(145deg,#233344,#1b2837);margin:0}
+#inspector button:hover{border-color:#588ca7;background:#284256}
+#inspector button.on{background:#234e68;border-color:#5c9dbe;color:#9be2ff}
+#inspector .inspector-actions>details{grid-column:1/-1;border:1px solid #34495b;border-radius:10px;background:#1b2938;padding:8px}
+#inspector details summary{display:flex;justify-content:center;min-height:28px}#inspector details[open]{display:flex;flex-wrap:wrap;gap:7px}#inspector details[open] summary{width:100%}
+#inspector input{background:#132231;color:#dbe7f0;border:1px solid #40566b;border-radius:5px;padding:5px}
+#inspector .inspector-actions .icon-select{display:flex}.inspector-empty{color:#8ea6bb;line-height:1.8;font-size:12px;padding:15px 0}
+.inspector-help{font-size:11px;line-height:1.8;color:#91a9bf;border-top:1px solid #344555;margin-top:22px;padding-top:16px}
+.inspector-settings{width:100%;height:40px;margin-top:14px;border-radius:10px;color:#a8d6ec;background:#203548;border:1px solid #3b5a70;display:flex;justify-content:center;align-items:center}
+.inspector-settings svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.6}
+.workspace-footer{margin:13px 0 0 72px;padding:10px 15px;min-height:35px;border:1px solid #344858;border-radius:11px;background:linear-gradient(100deg,#1a2734,#16212e);color:#9aafc3;font-size:11px}
+.empty-canvas{background:radial-gradient(ellipse at center,#152536,#060d17 70%)}.drop-hint{background:#0b1421;color:#9ab0c4}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:#3a5163;border-radius:5px}
+dialog{background:#142231!important;color:#dce7ef!important;border-color:#46667e!important;border-radius:18px!important;box-shadow:0 24px 80px #0009}dialog::backdrop{background:#030914b8;backdrop-filter:blur(4px)}
+@media(max-width:1300px){.workspace{grid-template-columns:48px 185px minmax(0,1fr) 218px;gap:10px}#inspector{padding:15px 12px}.series-card{grid-template-columns:47px minmax(0,1fr);gap:7px}.series-card canvas{width:47px;height:53px}#series-rail{padding:18px 8px}.workspace-footer{margin-left:58px}}
+@media(max-width:1000px){.workspace{grid-template-columns:46px 146px minmax(0,1fr) 180px;gap:8px}#inspector .inspector-actions{grid-template-columns:repeat(3,minmax(0,1fr))}.series-card{grid-template-columns:38px minmax(0,1fr)}.series-card canvas{width:38px;height:46px}.series-card .name{font-size:11px}#inspector{padding:13px 9px}.inspector-help{font-size:10px}#bar{gap:6px;padding:8px}}
+@media(max-width:760px){.workspace{grid-template-columns:42px 110px minmax(0,1fr);gap:6px}#inspector{display:none}#series-rail{display:block;padding:14px 5px;border-radius:12px}.series-card{display:block;padding:5px}.series-card canvas{width:100%;height:52px}.series-card .name{margin-top:5px}.panel .hd>*:not(.ttl){display:initial}.workspace-footer{margin-left:0;font-size:10px}.viewer-stage{border-radius:12px}#bar{max-height:100px}.inspector-actions{display:none!important}}
+
+@media(max-width:760px){.panel .hd>.icon-select,.panel .hd>button{display:inline-flex}.panel .hd>details{display:block}}
 </style>
 
-<div id="bar">
-  <div class="brand-tag">IMAGE TOOLS</div>
-</div>
-<div class="workspace"><nav id="series-rail" aria-label="Loaded series"><div class="rail-heading">LOADED SERIES</div></nav><nav id="tool-rail" aria-label="Image tools"></nav><div id="grid"></div></div>
-<div class="workspace-footer"><span>Scroll to browse &nbsp; · &nbsp; Ctrl / Cmd + scroll to zoom &nbsp; · &nbsp; Middle drag to pan</span><span>Space: cine &nbsp; · &nbsp; R: reset</span></div>
+<div class="workspace"><nav id="tool-rail" aria-label="Image tools"></nav><nav id="series-rail" aria-label="Loaded series"><div class="rail-heading">STUDY SERIES</div></nav><section class="viewer-stage" aria-label="Image workspace"><div id="bar"><button data-open-workflow title="Open study — upload a DICOM ZIP or change study and processing settings" aria-label="Open study"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6h7l2 3h9v11H3ZM3 9V4h7l2 2h8v3"/></svg></button><div class="brand-tag">IMAGE TOOLS</div></div><div id="grid"></div></section>__INSPECTOR__</div><div class="workspace-footer"><span>Scroll to browse · Ctrl / Cmd + scroll to zoom · Middle drag to pan</span><span>Double-click to expand · Hold Original to compare</span></div>
 
 <script>
 function fitHost(){try{const host=window.frameElement;if(host){host.style.height=Math.max(300,window.parent.innerHeight-host.getBoundingClientRect().top-12)+'px';}}catch(e){}}
 fitHost();try{window.parent.addEventListener('resize',fitHost);}catch(e){}
+function openStudySettings(){try{const doc=window.parent.document,side=doc.querySelector('[data-testid="stSidebar"]'),rect=side?.getBoundingClientRect();if(rect&&rect.right>40&&rect.left<window.parent.innerWidth&&getComputedStyle(side).display!=='none')return;
+ const button=doc.querySelector('button[data-testid="stExpandSidebarButton"],[data-testid="stExpandSidebarButton"] button,[data-testid="stSidebarCollapsedControl"] button,[data-testid="collapsedControl"] button');if(button){button.click();return;}
+ const control=doc.querySelector('[data-testid="stExpandSidebarButton"],[data-testid="stSidebarCollapsedControl"],[data-testid="collapsedControl"]');if(control){control.click();return;}
+ }catch(e){}const info=document.getElementById('inspector-title');if(info)info.textContent='Use the sidebar arrow at the top to open study settings.';}
+document.querySelectorAll('[data-open-workflow]').forEach(b=>b.addEventListener('click',openStudySettings));
 const P=__PAYLOAD__;
 const catalog=P.series;
 P.series=Array.from({length:16},(_,i)=>i<Math.min(4,catalog.length)?catalog[i]:null);
@@ -1834,7 +1891,21 @@ function chk(label,key,init){
 
 const grid=document.getElementById('grid');
 const rail=document.getElementById('series-rail');
-function activate(i){toolG.querySelectorAll('[data-tool]').forEach(b=>{const key=b.dataset.tool;if(key==='flipH'||key==='flipV'){b.classList.toggle('on',!!S[i][key]);b.setAttribute('aria-pressed',String(!!S[i][key]));}});const changed=hover!==i;hover=i;refreshOverlays();updateActiveSummary();if(changed)drawAll();document.querySelectorAll('.panel').forEach((p,j)=>p.classList.toggle('active-viewport',j===i));rail.querySelectorAll('.series-card').forEach((p,j)=>p.classList.toggle('active',catalog[j]===P.series[i]));}
+// Presentation-only: move the same live controls, preserving event handlers and state.
+const inspectorHost=document.getElementById('inspector-controls'),inspectorTitle=document.getElementById('inspector-title'),inspectorEmpty=document.getElementById('inspector-empty');let inspectorOwner=-1;
+function refreshInspector(i){
+ if(!inspectorHost||!S[i]?.header)return;
+ if(inspectorOwner===i&&!window.matchMedia('(max-width:760px)').matches&&P.series[i]){inspectorTitle.textContent=P.series[i].title;inspectorEmpty.hidden=true;return;}
+ if(inspectorOwner>=0&&S[inspectorOwner]?.header)S[inspectorOwner].header.append(...Array.from(inspectorHost.children));
+ inspectorOwner=-1;
+ if(!window.matchMedia('(max-width:760px)').matches&&P.series[i]){
+  const controls=Array.from(S[i].header.children).filter(el=>!el.classList.contains('ttl'));
+  inspectorHost.append(...controls);inspectorOwner=i;
+ }
+ inspectorTitle.textContent=P.series[i]?.title||'No active series';inspectorEmpty.hidden=!!P.series[i];
+}
+window.addEventListener('resize',()=>refreshInspector(hover));
+function activate(i){refreshInspector(i);toolG.querySelectorAll('[data-tool]').forEach(b=>{const key=b.dataset.tool;if(key==='flipH'||key==='flipV'){b.classList.toggle('on',!!S[i][key]);b.setAttribute('aria-pressed',String(!!S[i][key]));}});const changed=hover!==i;hover=i;refreshOverlays();updateActiveSummary();if(changed)drawAll();document.querySelectorAll('.panel').forEach((p,j)=>p.classList.toggle('active-viewport',j===i));rail.querySelectorAll('.series-card').forEach((p,j)=>p.classList.toggle('active',catalog[j]===P.series[i]));}
 async function thumbnail(i,cv){const s=P.series[i],data=await getFrame(i,Math.floor(s.pos.length/2),false);cv.width=s.cols;cv.height=s.rows;const ctx=cv.getContext('2d'),im=ctx.createImageData(s.cols,s.rows),[lo,hi]=s.wl.auto;for(let k=0;k<data.length;k++){let v=Math.max(0,Math.min(255,255*(val(s,data[k])-lo)/Math.max(1e-9,hi-lo)));if(s.invert)v=255-v;im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v;im.data[k*4+3]=255;}ctx.putImageData(im,0,0);}
 P.series.forEach((item,i)=>{
   let s=item||catalog[0];
@@ -1896,9 +1967,9 @@ P.series.forEach((item,i)=>{
   settings.style.cssText='font-size:10px;color:#91bdd4';
   st.togEnh=()=>bEnh.onclick();st.togInv=()=>bInv.onclick();st.togPlay=()=>bPlay.onclick();
   pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,orientationMenu,bPair,bCandidates,filters.smooth,filters.sharp,bRst,bPlay,settings]),cv,stat);
-  grid.append(pnl);
+  grid.append(pnl);st.header=pnl.querySelector(".hd");
   const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
-  st.clear=()=>{endOriginal(i,false);st.filterCache=null;stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover)updateActiveSummary();};
+  st.clear=()=>{endOriginal(i,false);st.filterCache=null;stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover){updateActiveSummary();refreshInspector(i);}};
   st.displayConfig=()=>({rotation:st.rotation,flipH:st.flipH,flipV:st.flipV,smooth:st.smooth,sharp:st.sharp,wl:sel.value,inv:st.inv,enh:st.enh,ctLike:st.ctLike,ctContrast:st.ctContrast,ctSharp:st.ctSharp});
   st.applyDisplay=c=>{st.rotation=Number.isFinite(c.rotation)?c.rotation:0;st.flipH=!!c.flipH;st.flipV=!!c.flipV;st.smooth=filterLevel(c.smooth);st.sharp=filterLevel(c.sharp);filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);sel.value=['balanced','auto','dicom','full','angio','dwi','vessels'].includes(c.wl)&&s.wl[c.wl]?c.wl:'auto';preset(i,sel.value);st.inv=!!c.inv;st.enh=!!c.enh&&s.hasEnh;bInv.className=st.inv?'on':'';bEnh.className=st.enh?'on':'';if(c.ctLike&&s.modality==='MR'){st.ctContrast=Math.max(.7,Math.min(1.8,Number(c.ctContrast)||1.25));st.ctSharp=Math.max(0,Math.min(.5,Number(c.ctSharp)||0));settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;bCT.onclick();}st.syncDisplayUI();draw(i);};
   st.syncDisplayUI=()=>{bPair.disabled=s.diffusionPair?.adc==null;bPair.title='Open paired ADC — '+(s.diffusionPair?.status||'This image has no automatic ADC pair.');bCandidates.disabled=s.restrictedCandidates?.status!=='processed';bCandidates.title='Restricted-diffusion candidates — '+(s.restrictedCandidates?.reason||'Enable the research option in Diffusion review; original matched high-b DWI and ADC with explicit units are required.');bCandidates.classList.toggle('on',!!st.candidateOverlay);angleInput.value=String(Math.round(st.rotation||0));bOriginal.title=s.derivedComposite?'Original — hold to view the unbalanced source composite, still resampled and blended.':'Original — hold to bypass processing at the source DICOM window. Release to restore.';sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
@@ -2036,14 +2107,17 @@ function makeToolbarIcons(){
   el.parentElement.insertBefore(wrap,el);wrap.append(el);el._updateIconTitle=update;el.addEventListener('change',update);update();
  });
 }
+refreshInspector(hover);
 makeToolbarIcons();
-const iconObserver=new MutationObserver(makeToolbarIcons);iconObserver.observe(bar,{childList:true,subtree:true});iconObserver.observe(grid,{childList:true,subtree:true});
+const iconObserver=new MutationObserver(makeToolbarIcons);iconObserver.observe(bar,{childList:true,subtree:true});iconObserver.observe(grid,{childList:true,subtree:true});if(inspectorHost)iconObserver.observe(inspectorHost,{childList:true,subtree:true});
 
 window.addEventListener('resize',drawAll);
 drawAll();
 </script>
 """
 
+
+VIEWER_HTML = VIEWER_HTML.replace("__INSPECTOR__", INSPECTOR_HTML)
 
 def build_empty_workspace():
     theme = VIEWER_HTML.split("</style>")[0] + "</style>"
@@ -2067,7 +2141,8 @@ def build_empty_workspace():
     tool_rail='<nav id="tool-rail" aria-label="Image tools"><div class="tool-scroll">'+''.join(placeholder(name,key) for name,key in [("Window / level","wl"),("Pan","pan"),("Zoom","zoom"),("3D pointer","pointer3d"),("Rotate image","rotate"),("Flip horizontal","flipH"),("Flip vertical","flipV"),("Distance","dist"),("Angle","angle"),("Rectangle ROI","roi"),("Ellipse ROI","ellipse"),("Arrow annotation","arrow"),("Text annotation","text")])+'</div><div class="tool-pinned">'+''.join(placeholder(name,key) for name,key in [("MPR","mpr"),("MIP","mip"),("VR","vr"),("Stitch / Compose","stitch")])+'</div></nav>'
 
     fit_script = '<script>' + VIEWER_HTML.split('<script>')[1].split('const P=')[0] + '</script>'
-    return theme + tools + '<div class="workspace">' + rail + tool_rail + '<div id="grid">' + cells + '</div></div><div class="workspace-footer"><span>No image data loaded</span><span>Window / level · Measurements · Linked scrolling · Cine</span></div>' + fit_script
+    tools=tools.replace('<div class="brand-tag">IMAGE TOOLS</div>', '<button data-open-workflow title="Open study — upload a DICOM ZIP or change study and processing settings" aria-label="Open study"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6h7l2 3h9v11H3ZM3 9V4h7l2 2h8v3"/></svg></button>' )
+    return theme + '<div class="workspace">' + tool_rail + rail + '<section class="viewer-stage">' + tools + '<div id="grid">' + cells + '</div></section>' + INSPECTOR_HTML + '</div><div class="workspace-footer"><span>No image data loaded</span><span>Measurements · Linked review · Original comparison</span></div>' + fit_script
 
 
 def build_viewer_html(series_payloads, patient_text=None, panel_height=360, study_key=None):
@@ -2120,6 +2195,24 @@ html,body,[data-testid="stAppViewContainer"]{background:#080c12!important;color:
 .study-strip b{color:#d9e6f2;font-weight:500}
 .study-strip .right{margin-left:auto;color:#6f849a;font-size:11px}
 @media(max-width:700px){.header-tab,.brand-sub{display:none}.header-meta{font-size:10px}.main-header{gap:8px}}
+/* Host chrome: the same visual palette as the embedded workstation. */
+html,body,[data-testid="stAppViewContainer"]{background:radial-gradient(ellipse at 0 0,#1a2d3a 0,transparent 44%),#0b111b!important;color:#dce5ee!important;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif!important}
+[data-testid="stHeader"]{background:transparent!important}
+[data-testid="stMainBlockContainer"]{padding:2.2rem 1.4rem .4rem!important}
+[data-testid="stVerticalBlock"]{gap:.8rem}
+.main-header{height:65px;margin-bottom:5px;border-bottom:0;gap:15px}
+.wordmark{font-size:25px;font-weight:550;letter-spacing:-.8px;color:#f2f6fb}.logo-mark{width:39px;height:39px;border:1px solid #537a93;border-radius:12px;background:linear-gradient(140deg,#284559,#182b3b);font-size:29px;color:#91daf5;box-shadow:0 5px 18px #0002}
+.brand-sub{color:#9ab1c6;font-size:10px;letter-spacing:1.6px;line-height:1.7}
+.header-tab{align-self:center;height:38px;margin-left:25px;border:1px solid #354858;border-radius:12px;background:linear-gradient(140deg,#223241,#182332);font-size:12px;color:#cbd9e6}
+.header-meta{color:#96adbf;font-size:11px}.status-dot{background:#71cbee;box-shadow:0 0 9px #71cbee33}
+.study-strip{min-height:57px;background:linear-gradient(120deg,#20303f,#172230);border:1px solid #3a5062;border-radius:16px;padding:14px 20px;color:#a9bdcf;gap:24px;font-size:12px;box-shadow:inset 0 1px #ffffff05}
+.study-strip b{color:#eef5fb;font-size:14px;font-weight:500}.study-strip .right{font-size:11px;color:#91aac0}
+[data-testid="stSidebar"]{background:linear-gradient(155deg,#1a2b39,#141d2a 65%)!important;border-right:1px solid #3c5366;min-width:290px;max-width:320px;box-shadow:12px 0 40px #0003}
+[data-testid="stSidebarUserContent"]{padding:1.4rem 1.1rem!important}
+[data-testid="stExpander"]{border-radius:12px;background:linear-gradient(140deg,#203040,#182636);border-color:#374d60}
+[data-testid="stFileUploaderDropzone"]{background:#1a2e40;border:1px dashed #4d7691;border-radius:14px}
+[data-testid="stFileUploaderDropzone"] button{border-radius:9px;background:#274b64;border-color:#4c7895;color:#d8f1fd}
+@media(max-width:760px){[data-testid="stMainBlockContainer"]{padding:2rem .45rem .3rem!important}.main-header{height:52px}.header-meta{font-size:10px}.header-tab{margin-left:0}.wordmark{font-size:21px}.study-strip{padding:10px 12px;gap:12px}}
 </style>
 """
 
@@ -2224,7 +2317,7 @@ def build_study_overview(series, loaded=None, selected=None, failed=0):
 
 
 def main():
-    st.set_page_config(page_title="SD-DCM | Clinical Workstation", page_icon="◉", layout="wide")
+    st.set_page_config(page_title="SD-DCM | Clinical Workstation", page_icon="◉", layout="wide", initial_sidebar_state="collapsed")
     st.markdown(CSS, unsafe_allow_html=True)
     
     st.markdown(
@@ -2235,8 +2328,8 @@ def main():
     )
     sb = st.sidebar
     sb.caption("Viewer build · " + APP_BUILD)
-    sb.markdown("### Study browser")
-    sb.caption("DICOM ARCHIVE · WORKFLOW UPDATE 14")
+    sb.markdown("### Study & processing")
+    sb.caption("DICOM ARCHIVE · DISPLAY · REVIEW")
     up = sb.file_uploader("Open DICOM study", type=["zip"],
                           help="Upload a ZIP archive containing DICOM images.")
     sb.caption("Files are processed by the Streamlit server hosting this app.")
