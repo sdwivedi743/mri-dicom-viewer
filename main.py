@@ -31,7 +31,7 @@ try:
 except ImportError:
     st = None
 
-APP_BUILD = "2026.10.17-tools.3"
+APP_BUILD = "2026.10.17-diffusion.5"
 MAX_PANELS = 6
 WORKSPACE_PAYLOAD_BUDGET = 96 * 1024 * 1024
 
@@ -524,8 +524,10 @@ def iter_modality_frames(ds):
     slope = _first(getattr(ds, "RescaleSlope", None), 1.0)
     icpt = _first(getattr(ds, "RescaleIntercept", None), 0.0)
     count = 0
-    source = ds.filename if getattr(ds, "_archive_owner", None) is not None else ds
-    for arr in iter_pixels(source):
+    original = getattr(ds,"_source_dataset",ds)
+    source = original.filename if getattr(original, "_archive_owner", None) is not None else original
+    frame_index=getattr(ds,"_source_frame",None)
+    for arr in iter_pixels(source,indices=[frame_index] if frame_index is not None else None):
         if arr.ndim == 3 and arr.shape[-1] == 3:
             arr = arr[..., 0] * .299 + arr[..., 1] * .587 + arr[..., 2] * .114
         if arr.shape != (int(ds.Rows), int(ds.Columns)):
@@ -605,37 +607,129 @@ def slice_position(ds, normal):
     ipp = _floats(getattr(ds, "ImagePositionPatient", None) or [], 3)
     return float(np.dot(ipp, normal)) if ipp else None
 
+
+class DiffusionFrameView:
+    """Metadata view retaining the original object and pixel frame index, without copying pixels."""
+    def __init__(self, source, overrides, frame_index=None):
+        self._source_dataset=source
+        self._source_frame=frame_index
+        self._overrides=overrides
+    def __getattr__(self,name):
+        if name in self._overrides:return self._overrides[name]
+        return getattr(self._source_dataset,name)
+    def __contains__(self,key):return key in self._source_dataset
+
+
+def diffusion_metadata(ds,frame=None,shared=None):
+    """Prefer frame-specific type/quantity metadata; b-value alone never identifies ADC."""
+    scopes=[v for v in (frame,shared,ds) if v is not None]
+    types=[];coded=[];bvalue=None;chosen_types=False;chosen_codes=False;code_scope=None
+    for scope in scopes:
+        local_types=[];local_codes=[]
+        local_types.extend(str(v).upper() for v in getattr(scope,"ImageType",[]))
+        local_types.extend(str(v).upper() for v in getattr(scope,"FrameType",[]))
+        for item in getattr(scope,"MRImageFrameTypeSequence",[]):
+            local_types.extend(str(v).upper() for v in getattr(item,"FrameType",[]))
+        # Restrict traversal to quantity/derivation definitions, not referenced source images.
+        for key in ("RealWorldValueMappingSequence","QuantityDefinitionSequence","DerivationCodeSequence"):
+            for item in getattr(scope,key,[]):
+                def codes(node,depth=0):
+                    if depth>4:return
+                    for attr in ("CodeMeaning","TextValue","LUTLabel","LUTExplanation"):
+                        value=getattr(node,attr,None)
+                        if value:local_codes.append(str(value).upper())
+                    for attr in ("QuantityDefinitionSequence","ConceptNameCodeSequence","ConceptCodeSequence","MeasurementUnitsCodeSequence"):
+                        for child in getattr(node,attr,[]):codes(child,depth+1)
+                codes(item)
+        if local_types and not chosen_types:types=local_types;chosen_types=True
+        if local_codes and not chosen_codes:coded=local_codes;chosen_codes=True;code_scope=scope
+        if bvalue is None:
+            candidates=list(getattr(scope,"MRDiffusionSequence",[]))+[scope]
+            for candidate in candidates:
+                value=_first(getattr(candidate,"DiffusionBValue",None))
+                if value is not None and np.isfinite(value) and value>=0:
+                    bvalue=round(float(value),1);break
+    if frame is not None and code_scope is not frame and "DIFFUSION" in types and "NONE" in types and "ADC" not in types:
+        coded=[]
+    structured=" ".join(types+coded)
+    adc_pattern=r"(?:^|[^A-Z])ADC(?:$|[^A-Z])|APPARENT[ _-]*DIFFUSION[ _-]*COEFFICIENT"
+    if re.search(adc_pattern,structured):return "ADC",None
+    desc=" ".join(str(getattr(ds,k,"")) for k in ("SeriesDescription","ProtocolName")).upper()
+    adc_name=bool(re.search(adc_pattern,desc))
+    dwi_name=bool(re.search(r"DWI|DIFFUSION[ _-]*WEIGHTED|TRACE",desc))
+    if adc_name and not dwi_name:return "ADC",None
+    if any(v in ("DIFFUSION","TRACEW","TRACE","DIFFUSION_ISO") for v in types) or bvalue is not None:
+        return "DWI",bvalue
+    if dwi_name and not adc_name:return "DWI",bvalue
+    return "",None
+
+
+def diffusion_views(ds):
+    if str(getattr(ds,"Modality","MR")).upper()!="MR":return [(ds,"",None)]
+    n=int(getattr(ds,"NumberOfFrames",1) or 1)
+    frames=getattr(ds,"PerFrameFunctionalGroupsSequence",[])
+    shareds=getattr(ds,"SharedFunctionalGroupsSequence",[])
+    shared=shareds[0] if shareds else None
+    if n>1 and len(frames)==n:
+        classified=[diffusion_metadata(ds,f,shared) for f in frames]
+        # Ordinary cine/volume data keeps its existing streaming path.
+        if any(kind for kind,_ in classified):
+            result=[]
+            for index,(frame,(kind,bvalue)) in enumerate(zip(frames,classified)):
+                kind=kind or "UNCLASSIFIED"
+                overrides={"NumberOfFrames":1,"InstanceNumber":index+1,"_diffusion_family":kind}
+                if bvalue is not None:overrides["DiffusionBValue"]=bvalue
+                for scope in (shared,frame):
+                    if scope is None:continue
+                    for seq,attrs in (("PlanePositionSequence",("ImagePositionPatient",)),("PlaneOrientationSequence",("ImageOrientationPatient",)),("PixelMeasuresSequence",("PixelSpacing","SliceThickness","SpacingBetweenSlices")),("PixelValueTransformationSequence",("RescaleSlope","RescaleIntercept")),("FrameVOILUTSequence",("WindowCenter","WindowWidth")),("MRImageFrameTypeSequence",("FrameType",))):
+                        items=getattr(scope,seq,[])
+                        if items:
+                            for attr in attrs:
+                                if hasattr(items[0],attr):overrides["ImageType" if attr=="FrameType" else attr]=getattr(items[0],attr)
+                    mappings=getattr(scope,"RealWorldValueMappingSequence",None)
+                    if mappings:overrides["RealWorldValueMappingSequence"]=mappings
+                result.append((DiffusionFrameView(ds,overrides,index),kind,bvalue))
+            return result
+    kind,bvalue=diffusion_metadata(ds,shared=shared)
+    if kind:
+        return [(DiffusionFrameView(ds,{"_diffusion_family":kind},None),kind,bvalue)]
+    return [(ds,"",None)]
+
+
 def group_series(named_datasets):
-    seen, groups = set(), {}
-    dup = 0
-    for name, ds in named_datasets:
-        sop = str(getattr(ds, "SOPInstanceUID", "") or "")
+    seen,groups=set(),{};dup=0
+    for name,ds in named_datasets:
+        sop=str(getattr(ds,"SOPInstanceUID","") or "")
         if sop:
-            if sop in seen:
-                dup += 1
-                continue
+            if sop in seen:dup+=1;continue
             seen.add(sop)
-        key = (str(getattr(ds, "SeriesInstanceUID", "unknown")), int(ds.Rows), int(ds.Columns))
-        groups.setdefault(key, []).append(ds)
-    series = []
-    for (uid, rows, cols), lst in groups.items():
-        a = lst[0]
-        desc = str(getattr(a, "SeriesDescription", "") or getattr(a, "ProtocolName", "") or "Series")
-        num = int(_first(getattr(a, "SeriesNumber", None), 0) or 0)
-        normal = geometry_of(a)
-        keyed = []
+        for view,kind,bvalue in diffusion_views(ds):
+            key=(str(getattr(ds,"StudyInstanceUID","")),str(getattr(ds,"SeriesInstanceUID","unknown")),int(ds.Rows),int(ds.Columns),kind,bvalue)
+            groups.setdefault(key,[]).append(view)
+    # Unknown objects within a known diffusion series must not enter a DWI or ADC stack.
+    diffusion_parents={key[:4] for key in groups if key[4]}
+    series=[]
+    for (study,source_uid,rows,cols,kind,bvalue),lst in groups.items():
+        a=lst[0]
+        if not kind and (study,source_uid,rows,cols) in diffusion_parents:kind="UNCLASSIFIED"
+        suffix=("ADC" if kind=="ADC" else "DWI"+(f" · b={bvalue:g}" if bvalue is not None else " · b unknown") if kind=="DWI" else "Diffusion · unclassified" if kind=="UNCLASSIFIED" else "")
+        original_desc=str(getattr(a,"SeriesDescription","") or getattr(a,"ProtocolName","") or "Series")
+        desc=original_desc+(" · "+suffix if suffix else "")
+        # Virtual identity is internal; the original DICOM UID remains unmodified.
+        uid=source_uid+("|"+kind+"|"+str(bvalue) if kind else "")
+        if kind:
+            lst=[DiffusionFrameView(d,{"SeriesDescription":desc,"_diffusion_family":kind},None) if not isinstance(d,DiffusionFrameView) else d for d in lst]
+            for d in lst:d._overrides.update(SeriesDescription=desc,_diffusion_family=kind)
+        num=int(_first(getattr(a,"SeriesNumber",None),0) or 0);normal=geometry_of(a);keyed=[]
         for ds in lst:
-            pos = slice_position(ds, normal)
-            keyed.append((pos if pos is not None else float("inf"), int(_first(getattr(ds, "InstanceNumber", None), 0) or 0), ds))
-        if all(k[0] != float("inf") for k in keyed):
-            keyed.sort(key=lambda t: (t[0], t[1]))
-        else:
-            keyed.sort(key=lambda t: t[1])
-        series.append(dict(uid=uid, rows=rows, cols=cols, desc=desc, num=num,
-                           items=[k[2] for k in keyed], normal=normal,
-                           label=f"#{num} {desc} · {rows}×{cols} · {sum(max(1, int(getattr(d, 'NumberOfFrames', 1) or 1)) for d in lst)} img"))
-    series.sort(key=lambda s: (s["num"], s["desc"]))
-    return series, dup
+            position=slice_position(ds,normal)
+            keyed.append((position if position is not None else float("inf"),int(_first(getattr(ds,"InstanceNumber",None),0) or 0),ds))
+        keyed.sort(key=(lambda t:(t[0],t[1])) if all(k[0]!=float("inf") for k in keyed) else (lambda t:t[1]))
+        series.append(dict(uid=uid,source_uid=source_uid,rows=rows,cols=cols,desc=desc,num=num,diffusion_family=kind,bvalue=bvalue,items=[k[2] for k in keyed],normal=normal,
+                           label=f"#{num} {desc} · {rows}×{cols} · {sum(max(1,int(getattr(d,'NumberOfFrames',1) or 1)) for d in lst)} img"))
+    series.sort(key=lambda s:(s["num"],0 if s.get("diffusion_family")=="DWI" else 1 if s.get("diffusion_family")=="ADC" else 2,-(s.get("bvalue") if s.get("bvalue") is not None else -1),s["desc"]))
+    return series,dup
+
 
 def read_zip(zbytes, max_member=400 * 1024 * 1024, progress=None):
     import pydicom
@@ -673,6 +767,7 @@ def read_zip(zbytes, max_member=400 * 1024 * 1024, progress=None):
     return out, skipped
 
 def quantitative_series(ds):
+    if getattr(ds,"_diffusion_family","") in ("ADC","UNCLASSIFIED"):return True
     text = " ".join([str(getattr(ds, "SeriesDescription", "")), str(getattr(ds, "ProtocolName", "")), " ".join(str(v) for v in getattr(ds, "ImageType", []))]).upper()
     return bool(re.search(r"\b(?:ADC|FA|CBF|CBV|MTT|TTP|PARAMETRIC|PERFUSION|PHASE)\b|T[12]\s*\*?\s*MAP|R[12]\s*\*?\s*MAP", text)
                 or hasattr(ds, "RealWorldValueMappingSequence")
@@ -822,6 +917,108 @@ def match_station_payloads(payloads,selected,reference):
     return out,logs
 
 
+
+def adc_mapping(ds):
+    """Explicit linear stored-pixel -> mm²/s mapping only; no magnitude-based unit guessing."""
+    maps=[]
+    for item in getattr(ds,"RealWorldValueMappingSequence",[]):
+        units=getattr(item,"MeasurementUnitsCodeSequence",[])
+        if len(units)!=1 or str(getattr(units[0],"CodingSchemeDesignator",""))!="UCUM":continue
+        unit=str(getattr(units[0],"CodeValue",""))
+        factor={"mm2/s":1.0,"um2/s":1e-6,"10*-6.mm2/s":1e-6}.get(unit)
+        slope=_first(getattr(item,"RealWorldValueSlope",None));intercept=_first(getattr(item,"RealWorldValueIntercept",None))
+        modality_slope=_first(getattr(ds,"RescaleSlope",None),1);modality_intercept=_first(getattr(ds,"RescaleIntercept",None),0)
+        if factor is None or slope is None or intercept is None or not modality_slope:continue
+        a=slope*factor/modality_slope;b=intercept*factor-modality_intercept*a
+        if not np.isfinite([a,b]).all() or a<=0:continue
+        maps.append(dict(slope=a,intercept=b,storedLo=_first(getattr(item,"RealWorldValueFirstValueMapped",None)),storedHi=_first(getattr(item,"RealWorldValueLastValueMapped",None)),modalitySlope=modality_slope,modalityIntercept=modality_intercept))
+    return maps[0] if len(maps)==1 else None
+
+
+def diffusion_payload_metadata(s):
+    ds=s["items"][0];family=s.get("diffusion_family","")
+    body=" ".join(str(getattr(ds,k,"")) for k in ("BodyPartExamined","SeriesDescription","ProtocolName")).upper()
+    return dict(family=family,bvalue=s.get("bvalue"),source=s.get("source_uid",s["uid"]),brain=bool(re.search(r"BRAIN|HEAD|CEREBR",body)),
+                mappings=[adc_mapping(d) for d in s["items"]] if family=="ADC" else [],
+                acquisition=str(getattr(ds,"AcquisitionTime","") or ""))
+
+
+def same_diffusion_grid(a,b):
+    if not a or not b or a["ref"]!=b["ref"] or a["study"]!=b["study"]:return False
+    return (np.max(np.abs(np.asarray(a["origin"])-b["origin"]))<=.1
+            and np.max(np.abs(np.asarray(a["row"])-b["row"]))<1e-4
+            and np.max(np.abs(np.asarray(a["col"])-b["col"]))<1e-4
+            and np.max(np.abs(np.asarray(a["spacing"])-b["spacing"]))<1e-3)
+
+
+def pair_diffusion_payloads(payloads):
+    """Require unambiguous ADC series with a one-to-one matching physical grid."""
+    for i,dwi in enumerate(payloads):
+        meta=dwi.get("diffusion",{})
+        if meta.get("family")!="DWI":continue
+        matches=[]
+        for j,adc in enumerate(payloads):
+            am=adc.get("diffusion",{})
+            if am.get("family")!="ADC" or (adc["rows"],adc["cols"])!=(dwi["rows"],dwi["cols"]):continue
+            mapping=[]
+            for g in dwi["geometry"]:
+                candidates=[k for k,h in enumerate(adc["geometry"]) if same_diffusion_grid(g,h)]
+                if len(candidates)!=1:break
+                mapping.append(candidates[0])
+            if len(mapping)==len(dwi["items"]) and len(set(mapping))==len(mapping):matches.append((j,mapping))
+        # Prefer maps exported inside the same parent series, otherwise require uniqueness.
+        preferred=[v for v in matches if payloads[v[0]]["diffusion"]["source"]==meta.get("source")]
+        options=preferred or matches
+        if len(options)==1:
+            j,mapping=options[0];dwi["diffusionPair"]=dict(adc=j,frames=mapping,status="Geometry-matched; verify acquisition and anatomy")
+        else:dwi["diffusionPair"]=dict(adc=None,frames=[],status="Ambiguous ADC series" if options else "No ADC with an unambiguous matching physical grid")
+
+
+def restricted_candidates(dwi,adc,mapping,confirm_brain=False):
+    """Untrained research baseline. Thresholds are engineering choices, not validated diagnostic cutoffs.
+
+    No probability/confidence or negative stroke result is produced. Never uses
+    enhanced pixels. Physical alignment alone cannot exclude patient motion.
+    """
+    meta=dwi.get("diffusion",{});am=adc.get("diffusion",{})
+    def skip(reason):return dict(status="skipped",reason=reason,frames=[],count=0)
+    if not (confirm_brain or meta.get("brain")):return skip("Brain study confirmation is required")
+    if meta.get("family")!="DWI" or am.get("family")!="ADC":return skip("DWI and ADC are required")
+    if meta.get("bvalue") is None or not 700<=meta["bvalue"]<=1500:return skip("A documented high b-value between 700 and 1500 s/mm² is required")
+    if dwi.get("streamed") or adc.get("streamed"):return skip("Streamed series are outside this research processing path")
+    if len(mapping)!=len(dwi["items"]):return skip("Incomplete DWI/ADC pairing")
+    if any(k>=len(am.get("mappings",[])) or am["mappings"][k] is None for k in mapping):return skip("Explicit ADC units/scaling in DICOM Real World Value Mapping are required")
+    rows,cols=dwi["rows"],dwi["cols"];masks=[];total=0;points=0
+    for n,k in enumerate(mapping):
+        if not same_diffusion_grid(dwi["geometry"][n],adc["geometry"][k]):return skip("Images do not share the same physical grid")
+        d=unpack_frame(dwi["items"][n]["o"],rows,cols,dwi["off"],dwi["scale"])
+        a=unpack_frame(adc["items"][k]["o"],rows,cols,adc["off"],adc["scale"])
+        mp=am["mappings"][k];stored=(a-mp["modalityIntercept"])/mp["modalitySlope"]
+        adc_values=a*mp["slope"]+mp["intercept"]
+        valid=np.isfinite(d)&np.isfinite(adc_values)&(d>0)&(adc_values>0)&(adc_values<.0025)
+        if mp["storedLo"] is not None:valid &= stored>=mp["storedLo"]-1
+        if mp["storedHi"] is not None:valid &= stored<=mp["storedHi"]+1
+        foreground=valid&(d>.1*np.percentile(d,99.5))
+        if foreground.sum()<200:masks.append([]);continue
+        median=float(np.median(d[foreground]));mad=float(np.median(np.abs(d[foreground]-median)))*1.4826
+        if mad<=0:masks.append([]);continue
+        normal_adc=float(np.median(adc_values[foreground]))
+        candidate=foreground&(d>median+2.5*mad)&(adc_values<.00065)&(adc_values<.8*normal_adc)
+        labels,count=ndi.label(candidate);sizes=np.bincount(labels.ravel());keep=sizes>=max(3,int(np.ceil(2.0/(dwi["spacing"][0]*dwi["spacing"][1]))));keep[0]=False
+        candidate=keep[labels];total+=int(keep.sum())
+        outline=candidate&~ndi.binary_erosion(candidate);flat=np.flatnonzero(outline);points+=len(flat)
+        if points>100000:return skip("Candidate outline exceeds the research overlay limit")
+        runs=[]
+        for y in np.unique(flat//cols):
+            xs=np.flatnonzero(outline[y]);start=last=int(xs[0])
+            for x in xs[1:]:
+                if x!=last+1:runs.append([int(y),start,last-start+1]);start=int(x)
+                last=int(x)
+            runs.append([int(y),start,last-start+1])
+        masks.append(runs)
+    return dict(status="processed",reason="Untrained rule-based research candidates; false positives and missed lesions expected. Review DWI, ADC and other sequences. No candidates does not exclude infarction.",frames=masks,count=total)
+
+
 def clinical_display_windows(frames,ds):
     """Linear, series-relative MRI display aids, never lesion or vessel detection."""
     if not frames or str(getattr(ds,"Modality","")).upper()!="MR" or quantitative_series(ds):return {}
@@ -943,7 +1140,7 @@ def build_payload_series(s, enhance, params, progress=None, force_stream=False, 
     orientations = {tuple(np.round(_floats(getattr(d, "ImageOrientationPatient", None) or [], 6) or [], 4)) for d in s["items"]}
     balanced_default = not quantitative and not cine_series(s)
     field = info.get("field") if balanced_default and len(orientations) == 1 and () not in orientations and params.get("shading", 0) == 0 else None
-    return dict(stationSignature=station_signature(s), title=s["label"], modality=str(getattr(a, "Modality", "")).upper(), plane=plane_name(s["normal"]), rows=s["rows"], cols=s["cols"],
+    return dict(diffusion=diffusion_payload_metadata(s), stationSignature=station_signature(s), title=s["label"], modality=str(getattr(a, "Modality", "")).upper(), plane=plane_name(s["normal"]), rows=s["rows"], cols=s["cols"],
                 spacing=[float(sp[0]), float(sp[1])], memoryId=hashlib.sha256(f"{s['uid']}|{s['desc']}|{s['rows']}|{s['cols']}".encode()).hexdigest(), spacingKnown=bool(_floats(getattr(a, "PixelSpacing", None) or [], 2)), thickness=_first(getattr(a, "SliceThickness", None)), geometry=geometry, sequence=str(getattr(a, "SeriesDescription", "") or getattr(a, "ProtocolName", "") or ""),
                 invert=str(getattr(a, "PhotometricInterpretation", "")).upper() == "MONOCHROME1",
                 pos=pos, hasEnh=bool(enh), processing=processing, streamed=streamed, snr=round(info["snr"], 1), sigma=info["sigma"],
@@ -1049,7 +1246,7 @@ const catalog=P.series;
 P.series=Array.from({length:16},(_,i)=>i<Math.min(4,catalog.length)?catalog[i]:null);
 const PH=__PANEL_H__, N=16;
 let layoutRows=2,layoutCols=2,expandedViewport=null,expandedLayout=null;
-const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null,ctLike:false,ctContrast:1.25,ctSharp:.25,ctRestore:null,rotation:0,flipH:false,flipV:false,smooth:0,sharp:0,holdOriginal:false,filterCache:null});});
+const S=P.series.map(item=>{const s=item||catalog[0];return ({idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),tok:0,meas:{},play:null,lay:null,pendingAngle:null,ctLike:false,ctContrast:1.25,ctSharp:.25,ctRestore:null,candidateOverlay:s.restrictedCandidates?.status==='processed',rotation:0,flipH:false,flipV:false,smooth:0,sharp:0,holdOriginal:false,filterCache:null});});
 const opt={sync:true,link:false,tool:'wl',overlays:true,refs:true,viewLink:false};
 // COMPOSE_CORE_START
 function composeDot(a,b){return a.reduce((s,v,k)=>s+v*b[k],0);}
@@ -1377,6 +1574,9 @@ async function draw(i){
   st.lay={...orientationCoefficients(st,sc,asp),sc,asp,ox:cv.width/2+st.px*dpr,oy:cv.height/2+st.py*dpr,w,h,dpr};
   ctx.setTransform(st.lay.a,st.lay.b,st.lay.c,st.lay.d,st.lay.ox,st.lay.oy);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
   ctx.drawImage(oc,-w/2,-h/2);
+  if(st.candidateOverlay&&!st.holdOriginal&&s.restrictedCandidates?.status==='processed'){
+    ctx.fillStyle='rgba(255,164,96,.9)';for(const [y,x,len] of (s.restrictedCandidates.frames[st.idx]||[]))ctx.fillRect(x-w/2,y-h/2,len,1);
+  }
   ctx.setTransform(1,0,0,1,0,0);ctx.lineWidth=Math.max(1,dpr*1.5);ctx.font=(12*dpr)+'px ui-monospace,monospace';ctx.shadowColor='#000';ctx.shadowBlur=3*dpr;
   if(opt.overlays)for(const m of (st.meas[st.idx]||[])){
     const [x1,y1]=toScreen(st,m.x1,m.y1),[x2,y2]=toScreen(st,m.x2,m.y2);
@@ -1400,7 +1600,7 @@ async function draw(i){
   ctx.shadowBlur=0;refreshMagnifier(i);
   if(i===hover){refreshOverlays();updateActiveSummary();}
   if(i===hover||!P.series.some((other,j)=>j!==i&&other===s&&!S[j].panel.hidden))rememberSeries(i);
-  st.stat.textContent='Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+(geom(i)?' · Loc: '+s.pos[st.idx].toFixed(1)+'mm':' · Position unavailable')+(st.rotation||st.flipH||st.flipV?' · '+Math.round(st.rotation||0)+'°'+(st.flipH?' FH':'')+(st.flipV?' FV':''):'')+' · W: '+Math.round(view.hi-view.lo)+' L: '+Math.round((view.hi+view.lo)/2)+
+  st.stat.textContent=(st.candidateOverlay&&!st.holdOriginal?'RESEARCH OUTLINES · ':'')+'Img: '+(st.idx+1)+'/'+s.pos.length+' · '+s.plane+(geom(i)?' · Loc: '+s.pos[st.idx].toFixed(1)+'mm':' · Position unavailable')+(st.rotation||st.flipH||st.flipV?' · '+Math.round(st.rotation||0)+'°'+(st.flipH?' FH':'')+(st.flipV?' FV':''):'')+' · W: '+Math.round(view.hi-view.lo)+' L: '+Math.round((view.hi+view.lo)/2)+
     ' · Spacing: '+s.spacing[1].toFixed(2)+'×'+s.spacing[0].toFixed(2)+'mm'+(view.wl==='balanced'&&!view.ctLike?' [BALANCED DISPLAY'+(s.presentation?.field?' · shading corrected':'')+']':'')+(st.holdOriginal?(s.derivedComposite?' [UNBALANCED SOURCE COMPOSITE]':' [HOLD ORIGINAL · DICOM source]'):view.ctLike?' [CT-like display · MRI source · experimental]':useEnh?' ['+s.processing.engine+' · '+(s.processing.frames[st.idx]||'processed')+']':(st.smooth||st.sharp?' [FILTERED SOURCE':' [SOURCE')+(s.processing?.reason?' · '+s.processing.reason:'')+']')+(!st.holdOriginal&&(st.smooth||st.sharp)?' · Smoothening '+st.smooth+' · Sharpening '+st.sharp:'');
 }
 
@@ -1492,6 +1692,8 @@ const icons={
  flipH:'<path d="M12 2v20M9 6 2 12l7 6ZM15 6l7 6-7 6Z"/>',
  flipV:'<path d="M2 12h20M6 9l6-7 6 7ZM6 15l6 7 6-7Z"/>',
  rotate:'<path d="M4 8a8 8 0 1 1 0 8M4 3v5h5"/>',
+ pairadc:'<rect x="2" y="4" width="8" height="16"/><rect x="14" y="4" width="8" height="16"/><path d="M8 12h8m-3-3 3 3-3 3"/>',
+ suspect:'<circle cx="12" cy="12" r="8" stroke-dasharray="3 2"/><path d="M12 7v6M12 16h.01"/>',
  locate:'<path d="M12 2v5M12 17v5M2 12h5M17 12h5"/><circle cx="12" cy="12" r="6"/>',
  zoom:'<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6M7 10h6M10 7v6"/>',
  dist:'<path d="m4 18 14-14 3 3L7 21ZM9 13l2 2M13 9l2 2"/>',
@@ -1505,7 +1707,7 @@ const icons={
  stitch:'<path d="M11 2h3l1 2-1 2h-3l-1-2ZM10 7h4l1 2-1 1h-4L9 9ZM9 11h5l1 2-1 1H9l-1-1ZM10 15h5l1 2-1 1h-5l-1-1ZM11 19h4l1 2-3 2-3-2M5 2H3v8h2M19 14h2v8h-2"/><path d="M3 12h4M17 12h4" stroke-dasharray="1 2"/>',
  vr:'<path d="m4 7 8-4 8 4v10l-8 4-8-4ZM4 7l8 4 8-4M12 11v10"/>',
  roi:'<rect x="4" y="4" width="16" height="16" rx="1" stroke-dasharray="3 3"/><path d="M8 12h8M12 8v8"/>'};
-const toolDescriptions={flipH:'Mirror the active image left to right without changing its source coordinates.',flipV:'Mirror the active image top to bottom without changing its source coordinates.',wl:'Drag horizontally for width, vertically for level.',pan:'Drag to move the image.',zoom:'Drag or use Ctrl + scroll to zoom.',locate:'Click anatomy to locate the matching physical point in compatible open views.',pointer3d:'Click or drag on anatomy to show persistent crosshairs and matching slices in compatible open views.',rotate:'Drag left or right to freely rotate the active 2D image.',dist:'Drag between two points to measure physical distance.',angle:'Click endpoint, vertex, endpoint to measure an angle.',roi:'Draw a rectangle to measure source signal statistics.',ellipse:'Draw an ellipse to measure source signal statistics.',arrow:'Draw an arrow annotation.',text:'Enter annotation text, then click an image.',reset:'Restore zoom, pan, orientation and the default image window.',mpr:'Multiplanar reconstruction is not yet available.',mip:'Maximum intensity projection is not yet available.',vr:'Volume rendering is not yet available.',stitch:'Compose compatible overlapping images into a derived blended image.'};
+const toolDescriptions={pairadc:"Open the matched ADC image in another visible viewport at the corresponding slice.",suspect:"Show or hide untrained research outlines of suspected restricted diffusion; not a diagnosis.",flipH:'Mirror the active image left to right without changing its source coordinates.',flipV:'Mirror the active image top to bottom without changing its source coordinates.',wl:'Drag horizontally for width, vertically for level.',pan:'Drag to move the image.',zoom:'Drag or use Ctrl + scroll to zoom.',locate:'Click anatomy to locate the matching physical point in compatible open views.',pointer3d:'Click or drag on anatomy to show persistent crosshairs and matching slices in compatible open views.',rotate:'Drag left or right to freely rotate the active 2D image.',dist:'Drag between two points to measure physical distance.',angle:'Click endpoint, vertex, endpoint to measure an angle.',roi:'Draw a rectangle to measure source signal statistics.',ellipse:'Draw an ellipse to measure source signal statistics.',arrow:'Draw an arrow annotation.',text:'Enter annotation text, then click an image.',reset:'Restore zoom, pan, orientation and the default image window.',mpr:'Multiplanar reconstruction is not yet available.',mip:'Maximum intensity projection is not yet available.',vr:'Volume rendering is not yet available.',stitch:'Compose compatible overlapping images into a derived blended image.'};
 
 function toolButton(x){
  const button=$('button',{className:'tool-button',title:x.l+' — '+(toolDescriptions[x.t]||'Choose this image operation.'),ariaLabel:x.l});
@@ -1672,6 +1874,12 @@ P.series.forEach((item,i)=>{
   angleInput.oninput=()=>{const angle=Number(angleInput.value);if(Number.isFinite(angle)){st.rotation=((angle%360)+360)%360;draw(i);}};
   orientationMenu.append(angleInput);
   [['Rotate left','↶',()=>st.rotation=((st.rotation||0)+270)%360],['Rotate right','↷',()=>st.rotation=((st.rotation||0)+90)%360],['Flip horizontal','↔',()=>st.flipH=!st.flipH],['Flip vertical','↕',()=>st.flipV=!st.flipV],['Reset orientation','⟲',()=>{st.rotation=0;st.flipH=st.flipV=false;}]].forEach(([name,symbol,action])=>{const b=$('button',{textContent:symbol,title:name+' — change display orientation only',ariaLabel:name});b.onclick=()=>{action();st.syncDisplayUI();draw(i);};orientationMenu.append(b);});
+  const bPair=toolButton({t:'pairadc',l:'Open paired ADC'});
+  bPair.disabled=s.diffusionPair?.adc==null;
+  bPair.onclick=()=>{const pair=s.diffusionPair;if(pair?.adc==null)return;const target=S.findIndex((v,j)=>j!==i&&!v.panel.hidden&&!P.series[j]);const j=target>=0?target:S.findIndex((v,j)=>j!==i&&!v.panel.hidden);if(j<0){readingNotice.textContent='Choose a layout with at least two visible viewports for paired ADC review.';return;}S[j].assign(pair.adc);S[j].idx=pair.frames[st.idx];draw(j);activate(i);};
+  const bCandidates=toolButton({t:'suspect',l:'Restricted-diffusion candidates'});
+  bCandidates.disabled=s.restrictedCandidates?.status!=='processed';
+  bCandidates.onclick=()=>{st.candidateOverlay=!st.candidateOverlay;bCandidates.classList.toggle('on',st.candidateOverlay);draw(i);};
   const filters={};
   for(const [key,label] of [['smooth','Smoothening'],['sharp','Sharpening']]){
    const control=$('select',{title:label+(key==='smooth'?' · noise-adaptive smoothing; 1 subtle → 5 strongest':' · noise-gated fine detail; 1 subtle → 5 strongest')+' · source measurements unchanged',ariaLabel:label});
@@ -1687,23 +1895,24 @@ P.series.forEach((item,i)=>{
   [['Contrast','ctContrast',.7,1.8,.05],['Edge emphasis','ctSharp',0,.5,.05]].forEach(([label,key,min,max,step])=>{const slider=$('input',{type:'range',min,max,step,value:st[key],ariaLabel:label});slider.oninput=()=>{st[key]=Number(slider.value);draw(i);};settings.append($('label',null,[document.createTextNode(label),slider]));});
   settings.style.cssText='font-size:10px;color:#91bdd4';
   st.togEnh=()=>bEnh.onclick();st.togInv=()=>bInv.onclick();st.togPlay=()=>bPlay.onclick();
-  pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,orientationMenu,filters.smooth,filters.sharp,bRst,bPlay,settings]),cv,stat);
+  pnl.append($('div',{className:'hd'},[$('div',{className:'ttl',textContent:s.title+(s.hasEnh&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'')}),sel,bEnh,bInv,bCT,bOriginal,orientationMenu,bPair,bCandidates,filters.smooth,filters.sharp,bRst,bPlay,settings]),cv,stat);
   grid.append(pnl);
   const hint=$('div',{className:'drop-hint',textContent:'Drop a series here',hidden:!!item});pnl.append(hint);
   st.clear=()=>{endOriginal(i,false);st.filterCache=null;stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;}st.tok++;P.series[i]=null;st.meas={};st.cache.clear();hint.hidden=false;pnl.querySelector('.ttl').textContent='Empty viewport';stat.textContent='';const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);if(i===hover)updateActiveSummary();};
   st.displayConfig=()=>({rotation:st.rotation,flipH:st.flipH,flipV:st.flipV,smooth:st.smooth,sharp:st.sharp,wl:sel.value,inv:st.inv,enh:st.enh,ctLike:st.ctLike,ctContrast:st.ctContrast,ctSharp:st.ctSharp});
   st.applyDisplay=c=>{st.rotation=Number.isFinite(c.rotation)?c.rotation:0;st.flipH=!!c.flipH;st.flipV=!!c.flipV;st.smooth=filterLevel(c.smooth);st.sharp=filterLevel(c.sharp);filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);sel.value=['balanced','auto','dicom','full','angio','dwi','vessels'].includes(c.wl)&&s.wl[c.wl]?c.wl:'auto';preset(i,sel.value);st.inv=!!c.inv;st.enh=!!c.enh&&s.hasEnh;bInv.className=st.inv?'on':'';bEnh.className=st.enh?'on':'';if(c.ctLike&&s.modality==='MR'){st.ctContrast=Math.max(.7,Math.min(1.8,Number(c.ctContrast)||1.25));st.ctSharp=Math.max(0,Math.min(.5,Number(c.ctSharp)||0));settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;bCT.onclick();}st.syncDisplayUI();draw(i);};
-  st.syncDisplayUI=()=>{angleInput.value=String(Math.round(st.rotation||0));bOriginal.title=s.derivedComposite?'Original — hold to view the unbalanced source composite, still resampled and blended.':'Original — hold to bypass processing at the source DICOM window. Release to restore.';sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
+  st.syncDisplayUI=()=>{bPair.disabled=s.diffusionPair?.adc==null;bPair.title='Open paired ADC — '+(s.diffusionPair?.status||'This image has no automatic ADC pair.');bCandidates.disabled=s.restrictedCandidates?.status!=='processed';bCandidates.title='Restricted-diffusion candidates — '+(s.restrictedCandidates?.reason||'Enable the research option in Diffusion review; original matched high-b DWI and ADC with explicit units are required.');bCandidates.classList.toggle('on',!!st.candidateOverlay);angleInput.value=String(Math.round(st.rotation||0));bOriginal.title=s.derivedComposite?'Original — hold to view the unbalanced source composite, still resampled and blended.':'Original — hold to bypass processing at the source DICOM window. Release to restore.';sel.value=st.wl||'auto';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';bCT.className=st.ctLike?'on':'';settings.hidden=!st.ctLike;filters.smooth.value=String(st.smooth);filters.sharp.value=String(st.sharp);settings.querySelectorAll('input')[0].value=st.ctContrast;settings.querySelectorAll('input')[1].value=st.ctSharp;};
   st.assign=(index)=>{
     if(P.series[i]===catalog[index]){activate(i);return;}
     endOriginal(i,false);stopMagnifier(i);rememberSeries(i);leaveCT();cancelAngle(i);if(st.play){clearInterval(st.play);st.play=null;bPlay.className='';}
     st.tok++;s=catalog[index];P.series[i]=s;
-    Object.assign(st,{idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null,matchPoint:null,ctLike:false,ctRestore:null,rotation:0,flipH:false,flipV:false,smooth:0,sharp:0,holdOriginal:false,filterCache:null});
+    Object.assign(st,{idx:Math.floor(s.pos.length/2),wl:s.presentation?.default||'auto',lo:s.wl[s.presentation?.default||'auto'][0],hi:s.wl[s.presentation?.default||'auto'][1],zoom:1,px:0,py:0,enh:s.hasEnh,inv:!!s.invert,cache:new Map(),meas:{},lay:null,matchPoint:null,ctLike:false,ctRestore:null,candidateOverlay:s.restrictedCandidates?.status==='processed',rotation:0,flipH:false,flipV:false,smooth:0,sharp:0,holdOriginal:false,filterCache:null});
     const restored=restoredState(index);if(restored)Object.assign(st,restored);
     pnl.querySelector('.ttl').textContent=s.title+(s.hasEnh&&!s.derivedComposite&&!['Adaptive','Neural'].some(prefix=>s.processing?.engine?.startsWith(prefix))?' · SNR:'+s.snr:'');
     sel.replaceChildren();['balanced','auto','dicom','full','angio','dwi','vessels'].forEach(n=>{if(s.wl[n])sel.append($('option',{value:n,textContent:({balanced:'Balanced display',angio:'Angiography',dwi:'DWI · infarct review',vessels:'Vessels'}[n]||'W/L '+n)}));});
     bEnh.title='Enhancement — toggle the prepared image processing. '+(s.processing?.engine||'');bCT.disabled=s.modality!=='MR';bEnh.style.display=s.hasEnh?'':'none';bEnh.className=st.enh?'on':'';bInv.className=st.inv?'on':'';hint.hidden=true;st.syncDisplayUI();activate(i);draw(i);
   };
+  st.syncDisplayUI();
   const initialIndex=catalog.indexOf(item),initial=initialIndex>=0?restoredState(initialIndex):null;if(initial){Object.assign(st,initial);st.syncDisplayUI();}
   pnl.ondragover=e=>{if(e.dataTransfer.types.includes('application/x-dicom-series')){e.preventDefault();e.dataTransfer.dropEffect='copy';pnl.classList.add('drop-target');}};
   pnl.ondragleave=()=>pnl.classList.remove('drop-target');
@@ -1977,7 +2186,8 @@ def _cache_resource(fn):
     return st.cache_resource(show_spinner=False, max_entries=1, ttl=600)(fn) if st else fn
 
 @_cache_resource
-def load_index(file_hash, _zbytes):
+def load_index(file_hash, _zbytes, grouping_version="diffusion-separated-v2"):
+    # Diffusion index v1: split DWI/ADC and known b-values before preparing images.
     # Cached work must never render UI or call callbacks that render UI.
     named, skipped = read_zip(_zbytes)
     series, dup = group_series(named)
@@ -2118,6 +2328,9 @@ def main():
             if dup:
                 st.markdown(f"Duplicate instances removed: `{dup}` (matching SOPInstanceUID).")
 
+    diffusion_count=sum(bool(item.get("diffusion_family")) for item in series)
+    if diffusion_count:
+        sb.caption("Diffusion import: DWI, ADC and known b-values are listed separately. Unclassified images remain in their own stack.")
     # Show every series from the selected study in the in-viewer thumbnail browser.
     study_groups = {}
     for item in series:
@@ -2198,6 +2411,26 @@ def main():
                 st.caption("Matched stations share the reference Auto window. Enhance toggles the matched display; hold Original restores each station's own source window. ROI values remain original.")
         elif len(eligible)<2:
             st.caption("Load at least two sagittal magnitude-MR series with standard geometry and acquisition timing metadata.")
+    pair_diffusion_payloads(payloads)
+    with sb.expander("Diffusion review · experimental",expanded=False):
+        st.caption("DWI and ADC are separated automatically. Pairing requires matching DICOM grids and an unambiguous ADC series; verify the acquisition and anatomy.")
+        research=st.checkbox("Enable research restricted-diffusion candidates",value=False,key="diffusion_research_"+fhash)
+        brain_confirm=st.checkbox("I confirm this is a brain study and have checked DWI/ADC alignment",value=False,key="brain_research_"+fhash) if research else False
+        if research:
+            st.caption("Confirm brain anatomy and visual DWI/ADC alignment to run the baseline. Matching grids do not exclude patient motion.")
+            st.caption("Untrained rule-based baseline, not infarct detection. May miss small lesions and highlight artifacts or other disease. Explicit ADC units are required; no scaling is guessed.")
+        for i,p in enumerate(payloads):
+            if p.get("diffusion",{}).get("family")!="DWI":continue
+            pair=p.get("diffusionPair",{});j=pair.get("adc")
+            st.caption(p["title"]+" → "+(payloads[j]["title"] if j is not None else pair.get("status","No ADC pair")))
+            if research and j is not None and brain_confirm:
+                result=restricted_candidates(p,payloads[j],pair["frames"],brain_confirm)
+                p["restrictedCandidates"]=result
+                st.caption(result["reason"])
+                if result["status"]=="processed":st.caption(f"Research candidate regions across slices: {result['count']} (not a lesion count).")
+        if sum(len(json.dumps(p,separators=(",",":"))) for p in payloads)>WORKSPACE_PAYLOAD_BUDGET:
+            st.error("Diffusion review metadata exceeds the viewer budget. Disable research candidates or load fewer series.")
+            return
     # Patient Demographics Banner Customization
     patient = None
     if show_ids:
